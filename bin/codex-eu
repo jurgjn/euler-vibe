@@ -6,18 +6,21 @@ CODEX_EU_BIN=$(realpath $0)
 CODEX_EU_DIR=$(dirname $(dirname $CODEX_EU_BIN))
 CODEX_EU_HOME=$CODEX_EU_DIR/home
 CODEX_EU_IMAGE=$CODEX_EU_DIR/images/codex-eu.sif
-CODEX_EU_WORKSPACE_DIR=$(realpath "$1")
+CODEX_EU_WORKSPACE_DIR=$(pwd)
 CODEX_EU_TMPDIR=$TMPDIR/codex-eu.$$
+CODEX_EU_ARGS="$@"
 echo Using image from: $CODEX_EU_IMAGE
 echo Mounting /home to: $CODEX_EU_HOME
 echo Mounting /tmp  to: $CODEX_EU_TMPDIR
 echo Mounting /workspace to: $CODEX_EU_WORKSPACE_DIR
+echo Executing codex with: $CODEX_EU_ARGS
 mkdir -p $CODEX_EU_HOME $CODEX_EU_TMPDIR
 singularity run \
     --nv \
     --cleanenv \
     --containall \
-    --home $CODEX_EU_DIR/home-codex:/home \
+    --home $CODEX_EU_HOME:/home \
     --bind $CODEX_EU_WORKSPACE_DIR:/workspace \
     --bind $CODEX_EU_TMPDIR:/tmp \
-    $CODEX_EU_IMAGE
+    $CODEX_EU_IMAGE \
+    $CODEX_EU_ARGS
