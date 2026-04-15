@@ -43,6 +43,10 @@ From: ubuntu:24.04
     npm install -g @openai/codex@latest
     npm cache clean --force
 
+%test
+    uv --version
+    codex --version
+
 %runscript
     cd /workspace
     # -c use_legacy_landlock=true because the default bubblewrap-based "sandboxing" does not run inside apptainer

@@ -5,6 +5,7 @@ An attempt at sandboxing codex on euler with singularity.
 Setup - clone repo, build image, add run script to $PATH:
 ```
 git clone git@github.com:jurgjn/euler-vibe.git
+cd euler-vibe
 singularity build images/codex-eu.sif images/codex-eu.def
 export PATH="$HOME/euler-vibe/bin:$PATH"
 ```
@@ -14,7 +15,7 @@ Example agentic task:
 cd $SCRATCH
 git clone https://github.com/DunbrackLab/IPSAE.git
 cd IPSAE
-
+codex-eu
 # Example prompt:
 #   Please familiarise yourself with the repository and optimise ipsae.py for speed
 ```
