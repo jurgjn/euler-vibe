@@ -48,7 +48,6 @@ From: ubuntu:24.04
     codex --version
 
 %runscript
-    cd /workspace
     # -c use_legacy_landlock=true because the default bubblewrap-based "sandboxing" does not run inside apptainer
     # --dangerously-bypass-approvals-and-sandbox because --full-auto still keeps asking for unnecessary permissions and we're running in apptainer
-    codex "$@" --dangerously-bypass-approvals-and-sandbox -c use_legacy_landlock=true
+    codex --dangerously-bypass-approvals-and-sandbox -c use_legacy_landlock=true "$@"
