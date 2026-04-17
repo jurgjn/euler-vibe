@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Create separate/unique directory for /tmp under local scratch using the process id of the batch script
+# `--writable-tmpfs` as codex likes to test things by creating temporary files under /tmp
+# `--bind $TMPDIR:/tmp` as default from `--writable-tmpfs` is really small
+CODEX_EU_BIN=$(realpath $0)
+CODEX_EU_DIR=$(dirname $(dirname $CODEX_EU_BIN))
+CODEX_EU_HOME=$CODEX_EU_DIR/home/codex-eu
+CODEX_EU_IMAGE=$CODEX_EU_DIR/images/codex-eu.sif
+CODEX_EU_CURRENT_DIR=$(pwd)
+CODEX_EU_TMPDIR=$TMPDIR/codex-eu.$$
+echo Mounting current directory: $CODEX_EU_CURRENT_DIR
+echo Mounting /home to: $CODEX_EU_HOME
+echo Mounting /tmp  to: $CODEX_EU_TMPDIR
+echo Using image from: $CODEX_EU_IMAGE
+mkdir -p $CODEX_EU_HOME $CODEX_EU_TMPDIR
+singularity shell \
+    --nv \
+    --cleanenv \
+    --containall \
+    --cwd $CODEX_EU_CURRENT_DIR \
+    --bind $CODEX_EU_CURRENT_DIR \
+    --home $CODEX_EU_HOME:/home \
+    --bind $CODEX_EU_TMPDIR:/tmp \
+    $CODEX_EU_IMAGE
