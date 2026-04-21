@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Stash:
+# singularity shell --nv --cleanenv --containall --home $(pwd)/home:/home --bind $(pwd)/workspace:/workspace --bind $OLLAMA_MODELS:/home/.ollama/models ollama-eu.sif
+# singularity shell --nv --cleanenv --home $(pwd)/home:/home --bind $(pwd)/workspace:/workspace --bind $OLLAMA_MODELS:/home/.ollama/models ollama-eu.sif
+# singularity shell --nv --cleanenv --home $(pwd):/home --bind $OLLAMA_MODELS:/home/.ollama/models ollama-eu.sif
+# singularity shell --nv --cleanenv --fakeroot --overlay my_overlay --bind $(pwd):/workspace --bind $OLLAMA_MODELS:/root/.ollama/models ollama-eu.sif
+# singularity shell --nv --cleanenv --bind $(pwd):/workspace --bind $OLLAMA_MODELS:/home/.ollama/models ollama-eu.sif
+singularity run \
+    --nv \
+    --cleanenv \
+    --containall \
+    --home $(pwd)/home:/home \
+    --bind $(pwd)/workspace:/workspace \
+    --bind $OLLAMA_MODELS:/home/.ollama/models \
+    ollama-eu.sif
