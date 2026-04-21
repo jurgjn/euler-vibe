@@ -1,0 +1,10 @@
+# Local Codex state when running from the repo root.
+.cache/
+.codex
+
+# Runtime home directories are mounted into the containers and accumulate
+# auth, logs, histories, and other local state that should stay untracked.
+home/
+
+# Built container images.
+images/*.sif
