@@ -1,0 +1,24 @@
+export PS1='(codex-mobile) \w \$ '
+
+codex() {
+    case "${1:-}" in
+        ""|resume|exec|apply|--model|--config|-c|--approval-mode|--sandbox|--full-auto|--dangerously-bypass-approvals-and-sandbox)
+            command codex "$@" --dangerously-bypass-approvals-and-sandbox -c use_legacy_landlock=true
+            ;;
+        login|logout|whoami|help|--help|-h|app-server|mcp)
+            command codex "$@"
+            ;;
+        *)
+            command codex "$@" --dangerously-bypass-approvals-and-sandbox -c use_legacy_landlock=true
+            ;;
+    esac
+}
+
+happy() {
+    if [ "${1:-}" = "codex" ]; then
+        shift
+        command happy codex "$@" --dangerously-bypass-approvals-and-sandbox -c use_legacy_landlock=true
+    else
+        command happy "$@"
+    fi
+}
