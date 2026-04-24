@@ -13,6 +13,43 @@ CODEX_MOBILE_WORKSPACE_DIR=$(pwd)
 CODEX_MOBILE_TMPDIR=${TMPDIR:-/tmp}/codex-mobile.$$
 CODEX_MOBILE_HAPPY_DIR=$CODEX_MOBILE_HOME/.happy
 CODEX_MOBILE_HAPPY_LOGS_DIR=$CODEX_MOBILE_HAPPY_DIR/logs
+CODEX_MOBILE_EXTRA_BINDS=()
+CODEX_MOBILE_EXTRA_READ_BINDS=()
+CODEX_MOBILE_ARGS=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --extra-bind)
+            if [ $# -lt 2 ]; then
+                echo "Missing bind specification after --extra-bind" >&2
+                exit 1
+            fi
+            CODEX_MOBILE_EXTRA_BINDS+=("$2")
+            shift 2
+            ;;
+        --extra-read-bind)
+            if [ $# -lt 2 ]; then
+                echo "Missing bind specification after --extra-read-bind" >&2
+                exit 1
+            fi
+            CODEX_MOBILE_EXTRA_READ_BINDS+=("$2")
+            shift 2
+            ;;
+        --)
+            shift
+            while [ $# -gt 0 ]; do
+                CODEX_MOBILE_ARGS+=("$1")
+                shift
+            done
+            ;;
+        *)
+            CODEX_MOBILE_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+set -- "${CODEX_MOBILE_ARGS[@]}"
 
 SINGULARITY_BASE_ARGS=(
     --nv
@@ -24,10 +61,44 @@ SINGULARITY_BASE_ARGS=(
     --bind "$CODEX_MOBILE_TMPDIR:/tmp"
 )
 
+for bind_spec in "${CODEX_MOBILE_EXTRA_BINDS[@]}"; do
+    SINGULARITY_BASE_ARGS+=(--bind "$bind_spec")
+done
+
+for bind_spec in "${CODEX_MOBILE_EXTRA_READ_BINDS[@]}"; do
+    case "$bind_spec" in
+        *:ro)
+            SINGULARITY_BASE_ARGS+=(--bind "$bind_spec")
+            ;;
+        *:rw)
+            SINGULARITY_BASE_ARGS+=(--bind "${bind_spec%:rw}:ro")
+            ;;
+        *)
+            SINGULARITY_BASE_ARGS+=(--bind "$bind_spec:ro")
+            ;;
+    esac
+done
+
 echo "Using image from: $CODEX_MOBILE_IMAGE"
 echo "Mounting /home to: $CODEX_MOBILE_HOME"
 echo "Mounting /tmp  to: $CODEX_MOBILE_TMPDIR"
 echo "Mounting /workspace to: $CODEX_MOBILE_WORKSPACE_DIR"
+for bind_spec in "${CODEX_MOBILE_EXTRA_BINDS[@]}"; do
+    echo "Mounting extra bind (rw): $bind_spec"
+done
+for bind_spec in "${CODEX_MOBILE_EXTRA_READ_BINDS[@]}"; do
+    case "$bind_spec" in
+        *:ro)
+            echo "Mounting extra bind (ro): $bind_spec"
+            ;;
+        *:rw)
+            echo "Mounting extra bind (ro): ${bind_spec%:rw}:ro"
+            ;;
+        *)
+            echo "Mounting extra bind (ro): $bind_spec:ro"
+            ;;
+    esac
+done
 
 mkdir -p "$CODEX_MOBILE_HOME" "$CODEX_MOBILE_TMPDIR"
 

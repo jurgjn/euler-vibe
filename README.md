@@ -19,6 +19,8 @@ codex-mobile
 
 `codex-mobile --auth` shows the Happy pairing QR code from inside the container. After pairing, launch `codex-mobile` to start a Codex session that Happy can hand off to mobile. Session state, Happy pairing data, and Codex auth for this image are stored under `$CODEX_MOBILE_HOME` (see [script](bin/codex-mobile)).
 
+`codex-mobile` also accepts repeated `--extra-bind SRC[:DEST]` and `--extra-read-bind SRC[:DEST]` wrapper flags before the subcommand so additional paths can be mounted read-write or read-only inside the container.
+
 Happy's Quick Start guide was last updated on March 23, 2026 and still shows `npm install -g happy-coder`, but the current upstream Happy README now says the package moved to `happy`. This image builds Happy CLI `1.1.7` from the public `slopus/happy` source and applies a small local patch so `codex-mobile` can use a proxy-aware websocket agent on proxy-restricted clusters instead of assuming direct websocket connectivity.
 
 ## See also
