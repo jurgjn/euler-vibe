@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+# Use location of the script to find locations for config & container image
+EU_VIBE_BIN=$(realpath $0)
+EU_VIBE_DIR=$(dirname $(dirname $EU_VIBE_BIN))
+EU_VIBE_HOME=$EU_VIBE_DIR/home/pi-eu
+EU_VIBE_IMAGE=$EU_VIBE_DIR/images/pi-eu.sif
+#EU_VIBE_IMAGE=$EU_VIBE_DIR/images/pi-mi300a.sif
+
+# Mount current directory as 'workspace'
+EU_VIBE_CURRENT_DIR=$(pwd)
+
+# TMPDIR from local scratch using current process id
+EU_VIBE_TMPDIR=$TMPDIR/pi-eu.$$
+
+# Model will be checked/downloaded with `hf download`
+EU_VIBE_MODEL=Qwen/Qwen3.6-27B
+
+# Specify extra arguments for pi on the command line, e.g. add `-p` for a non-interactive run
+#EU_VIBE_PI_ARGS="$@"
+
+# List of arguments passed on to `vllm serve`; by default, adapted from: https://recipes.vllm.ai/Qwen/Qwen3.6-27B
+# Sampling parameters and `--max-model-len` from https://huggingface.co/Qwen/Qwen3.6-27B
+# --max-num-seqs (number of concurrent queries) from default to 16 fix `ValueError: max_num_seqs (1024) exceeds available Mamba cache blocks (677). Each decode sequence requires one Mamba cache block, so CUDA graph capture cannot proceed. Please lower max_num_seqs to at most 677 or increase gpu_memory_utilization.
+readarray -t EU_VIBE_VLLM_ARRAY <<'EOF'
+    --trust-remote-code
+    --tensor-parallel-size 1
+    --enable-auto-tool-choice
+    --tool-call-parser qwen3_coder
+    --reasoning-parser qwen3
+    --language-model-only
+    --max-model-len 262144
+    --max-num-seqs 16
+    --override-generation-config.temperature 0.6
+    --override-generation-config.top_p 0.95
+    --override-generation-config.top_k 20
+    --override-generation-config.min_p 0.0
+    --override-generation-config.presence_penalty 0.0
+    --override-generation-config.repetition_penalty 1.0
+    --host 0.0.0.0
+EOF
+EU_VIBE_VLLM_ARGS="${EU_VIBE_VLLM_ARRAY[@]}"
+
+#echo Executing vllm serve with: $EU_VIBE_VLLM_ARGS
+echo Mounting current directory: $EU_VIBE_CURRENT_DIR
+echo Mounting /home to: $EU_VIBE_HOME
+echo Mounting /tmp  to: $EU_VIBE_TMPDIR
+echo Using image from: $EU_VIBE_IMAGE
+
+# Ensure mount point directories are present
+mkdir -p $EU_VIBE_HOME $EU_VIBE_TMPDIR
+
+# Run singularity with runscript
+#     --rocm \
+singularity run \
+    --nv \
+    --cleanenv \
+    --containall \
+    --env EU_VIBE_MODEL=$EU_VIBE_MODEL \
+    --env EU_VIBE_VLLM_ARGS="$EU_VIBE_VLLM_ARGS" \
+    --cwd=$EU_VIBE_CURRENT_DIR \
+    --bind $EU_VIBE_CURRENT_DIR \
+    --home $EU_VIBE_HOME:/home \
+    --bind $EU_VIBE_TMPDIR:/tmp \
+    $EU_VIBE_IMAGE \
+    "$@"
