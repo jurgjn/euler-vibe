@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+curl http://eu-mi300-001:11434/v1/chat/completions -H "Content-Type: application/json" -d '{"model": "Qwen3.6-27B", "messages": [{"role": "user", "content": "Write a haiku about the ocean."}]}'

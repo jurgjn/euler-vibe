@@ -3,11 +3,13 @@
 # Use location of the script to find locations for config & container image
 EU_VIBE_BIN=$(realpath $0)
 EU_VIBE_DIR=$(dirname $(dirname $EU_VIBE_BIN))
-EU_VIBE_HOME=$EU_VIBE_DIR/home/vllm-serve-qwen
-EU_VIBE_IMAGE=$EU_VIBE_DIR/images/vllm-openai-rocm_nightly.sif
+EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai-rocm_nightly.sif
+
+EU_VIBE_HOME=$TMPDIR/vllm-serve-qwen.$$/home
+EU_VIBE_TMP=$TMPDIR/vllm-serve-qwen.$$/tmp
 
 # Ensure mount point directories are present
-mkdir -p $EU_VIBE_HOME $EU_VIBE_TMPDIR
+mkdir -p $EU_VIBE_HOME $EU_VIBE_TMP
 
 # Run singularity/vllm
 singularity run \
@@ -23,10 +25,10 @@ singularity run \
     --env TRANSFORMERS_OFFLINE=1 \
     --env HF_HUB_OFFLINE=1 \
     --env VLLM_DISABLE_COMPILE_CACHE=1 \
+    --bind $EU_VIBE_DIR/models:/models:ro --cwd /models \
     --home $EU_VIBE_HOME:/home \
-    --bind $EU_VIBE_DIR/models:/models --cwd /models \
-    --bind $EU_VIBE_TMPDIR:/tmp \
-    $EU_VIBE_IMAGE \
+    --bind $EU_VIBE_TMP:/tmp \
+    $EU_VIBE_SIF \
         Qwen3.6-27B \
             --trust-remote-code \
             --tensor-parallel-size 1 \
