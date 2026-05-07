@@ -9,7 +9,7 @@ singularity run \
     --cwd=$EU_VIBE_DIR/models \
     --bind $EU_VIBE_DIR/models \
     $EU_VIBE_DIR/images/git_latest.sif \
-    lfs clone https://huggingface.co/"$@"
+    lfs clone https://huggingface.co/"$@" "$@"
 
 echo Disk space usage:
 du -hs $EU_VIBE_DIR/models/*
