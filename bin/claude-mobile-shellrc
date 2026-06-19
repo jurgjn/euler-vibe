@@ -1,0 +1,28 @@
+export PS1='(claude-mobile) \w \$ '
+
+# Run Claude Code directly (no Happy). --dangerously-skip-permissions because the
+# default sandbox does not run inside apptainer; management subcommands pass through.
+claude() {
+    case "${1:-}" in
+        config|mcp|update|doctor|install|migrate-installer|--help|-h|--version|-v)
+            command claude "$@"
+            ;;
+        *)
+            command claude --dangerously-skip-permissions "$@"
+            ;;
+    esac
+}
+
+# Run via Happy for mobile control. `happy` with no subcommand starts a Claude
+# session; --yolo is Happy's sugar for --dangerously-skip-permissions. Real Happy
+# subcommands pass through untouched.
+happy() {
+    case "${1:-}" in
+        auth|resume|codex|gemini|acp|connect|sandbox|notify|daemon|doctor)
+            command happy "$@"
+            ;;
+        *)
+            command happy --yolo "$@"
+            ;;
+    esac
+}

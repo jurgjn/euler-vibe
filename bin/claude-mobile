@@ -1,0 +1,320 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Create separate/unique directory for /tmp under local scratch using the process id of the batch script
+# `--bind $TMPDIR:/tmp` as default from `--writable-tmpfs` is really small
+CLAUDE_MOBILE_BIN=$(realpath "$0")
+CLAUDE_MOBILE_DIR=$(dirname "$(dirname "$CLAUDE_MOBILE_BIN")")
+CLAUDE_MOBILE_HOME=${CLAUDE_MOBILE_HOME:-$CLAUDE_MOBILE_DIR/home/claude-mobile}
+CLAUDE_MOBILE_IMAGE=${CLAUDE_MOBILE_IMAGE:-$CLAUDE_MOBILE_DIR/images/claude-mobile.sif}
+CLAUDE_MOBILE_SHELLRC=$CLAUDE_MOBILE_DIR/bin/claude-mobile-shellrc
+CLAUDE_MOBILE_WORKSPACE_DIR=$(pwd)
+CLAUDE_MOBILE_TMPDIR=${TMPDIR:-/tmp}/claude-mobile.$$
+CLAUDE_MOBILE_HAPPY_DIR=$CLAUDE_MOBILE_HOME/.happy
+CLAUDE_MOBILE_HAPPY_LOGS_DIR=$CLAUDE_MOBILE_HAPPY_DIR/logs
+CLAUDE_MOBILE_EXTRA_BINDS=()
+CLAUDE_MOBILE_EXTRA_READ_BINDS=()
+CLAUDE_MOBILE_ARGS=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --extra-bind)
+            if [ $# -lt 2 ]; then
+                echo "Missing bind specification after --extra-bind" >&2
+                exit 1
+            fi
+            CLAUDE_MOBILE_EXTRA_BINDS+=("$2")
+            shift 2
+            ;;
+        --extra-read-bind)
+            if [ $# -lt 2 ]; then
+                echo "Missing bind specification after --extra-read-bind" >&2
+                exit 1
+            fi
+            CLAUDE_MOBILE_EXTRA_READ_BINDS+=("$2")
+            shift 2
+            ;;
+        --)
+            shift
+            while [ $# -gt 0 ]; do
+                CLAUDE_MOBILE_ARGS+=("$1")
+                shift
+            done
+            ;;
+        *)
+            CLAUDE_MOBILE_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+set -- "${CLAUDE_MOBILE_ARGS[@]}"
+
+SINGULARITY_BASE_ARGS=(
+    --nv
+    --cleanenv
+    --containall
+    --home "$CLAUDE_MOBILE_HOME:/home"
+    --bind "$CLAUDE_MOBILE_SHELLRC:/tmp/claude-mobile-shellrc"
+    --bind "$CLAUDE_MOBILE_WORKSPACE_DIR:/workspace"
+    --bind "$CLAUDE_MOBILE_TMPDIR:/tmp"
+)
+
+for bind_spec in "${CLAUDE_MOBILE_EXTRA_BINDS[@]}"; do
+    SINGULARITY_BASE_ARGS+=(--bind "$bind_spec")
+done
+
+for bind_spec in "${CLAUDE_MOBILE_EXTRA_READ_BINDS[@]}"; do
+    case "$bind_spec" in
+        *:ro)
+            SINGULARITY_BASE_ARGS+=(--bind "$bind_spec")
+            ;;
+        *:rw)
+            SINGULARITY_BASE_ARGS+=(--bind "${bind_spec%:rw}:ro")
+            ;;
+        *)
+            SINGULARITY_BASE_ARGS+=(--bind "$bind_spec:ro")
+            ;;
+    esac
+done
+
+echo "Using image from: $CLAUDE_MOBILE_IMAGE"
+echo "Mounting /home to: $CLAUDE_MOBILE_HOME"
+echo "Mounting /tmp  to: $CLAUDE_MOBILE_TMPDIR"
+echo "Mounting /workspace to: $CLAUDE_MOBILE_WORKSPACE_DIR"
+for bind_spec in "${CLAUDE_MOBILE_EXTRA_BINDS[@]}"; do
+    echo "Mounting extra bind (rw): $bind_spec"
+done
+for bind_spec in "${CLAUDE_MOBILE_EXTRA_READ_BINDS[@]}"; do
+    case "$bind_spec" in
+        *:ro)
+            echo "Mounting extra bind (ro): $bind_spec"
+            ;;
+        *:rw)
+            echo "Mounting extra bind (ro): ${bind_spec%:rw}:ro"
+            ;;
+        *)
+            echo "Mounting extra bind (ro): $bind_spec:ro"
+            ;;
+    esac
+done
+
+mkdir -p "$CLAUDE_MOBILE_HOME" "$CLAUDE_MOBILE_TMPDIR"
+
+# Preserve proxy settings across `singularity --cleanenv` so relay traffic can
+# still reach Happy when the host shell is configured via environment modules.
+# Mirror lowercase and uppercase forms because different tools consult different
+# variants, and Apptainer prefers APPTAINERENV_* while still accepting the
+# Singularity-prefixed compatibility variables.
+for proxy_var in http_proxy https_proxy all_proxy no_proxy; do
+    lower_value=${!proxy_var:-}
+    upper_name=$(printf '%s' "$proxy_var" | tr '[:lower:]' '[:upper:]')
+    upper_value=${!upper_name:-}
+    proxy_value=${lower_value:-$upper_value}
+
+    if [ -n "$proxy_value" ]; then
+        export "$proxy_var=$proxy_value"
+        export "$upper_name=$proxy_value"
+        export "SINGULARITYENV_${proxy_var}=$proxy_value"
+        export "SINGULARITYENV_${upper_name}=$proxy_value"
+        export "APPTAINERENV_${proxy_var}=$proxy_value"
+        export "APPTAINERENV_${upper_name}=$proxy_value"
+    fi
+done
+
+# Node.js does not automatically honor HTTP(S)_PROXY for its built-in network
+# stack unless env-proxy support is enabled.
+export NODE_USE_ENV_PROXY=1
+export SINGULARITYENV_NODE_USE_ENV_PROXY=1
+export APPTAINERENV_NODE_USE_ENV_PROXY=1
+
+latest_happy_log() {
+    find "$CLAUDE_MOBILE_HAPPY_LOGS_DIR" -maxdepth 1 -type f -name '*.log' 2>/dev/null | sort | tail -n 1
+}
+
+show_connection_lines() {
+    local log_file=$1
+    local pattern='ECONNREFUSED|websocket error|TransportError|Registered externally-started session|Removing stale session|Session started'
+
+    if command -v rg >/dev/null 2>&1; then
+        rg -n "$pattern" "$log_file" || true
+    else
+        grep -En "$pattern" "$log_file" || true
+    fi
+}
+
+open_container_shell() {
+    echo "Opening interactive shell inside the container"
+    exec singularity exec \
+        "${SINGULARITY_BASE_ARGS[@]}" \
+        "$CLAUDE_MOBILE_IMAGE" \
+        bash --rcfile /tmp/claude-mobile-shellrc -ic '
+            cd /workspace
+            exec bash --rcfile /tmp/claude-mobile-shellrc -i
+        '
+}
+
+run_in_container_shell() {
+    local program=$1
+    shift
+
+    echo "Executing $program in the container with: $*"
+    exec singularity exec \
+        "${SINGULARITY_BASE_ARGS[@]}" \
+        "$CLAUDE_MOBILE_IMAGE" \
+        bash --rcfile /tmp/claude-mobile-shellrc -ic '
+            cd /workspace
+            "$@"
+            status=$?
+            echo
+            if [ "$status" -eq 130 ]; then
+                echo "$1 interrupted. Staying in the container shell."
+            elif [ "$status" -ne 0 ]; then
+                echo "$1 exited with status $status. Staying in the container shell."
+            fi
+            exec bash --rcfile /tmp/claude-mobile-shellrc -i
+        ' bash "$program" "$@"
+}
+
+if [ "${1:-}" = "logs" ]; then
+    LOG_FILE=$(latest_happy_log)
+    if [ -z "${LOG_FILE:-}" ]; then
+        echo "No Happy logs found under $CLAUDE_MOBILE_HAPPY_LOGS_DIR"
+        exit 1
+    fi
+
+    echo "Showing Happy log: $LOG_FILE"
+    tail -n "${CLAUDE_MOBILE_LOG_LINES:-120}" "$LOG_FILE"
+    exit 0
+fi
+
+if [ "${1:-}" = "doctor" ]; then
+    echo "== claude-mobile doctor =="
+    echo "Image: $CLAUDE_MOBILE_IMAGE"
+    echo "Home:  $CLAUDE_MOBILE_HOME"
+    echo "Happy: $CLAUDE_MOBILE_HAPPY_DIR"
+    echo
+
+    if [ -f "$CLAUDE_MOBILE_HAPPY_DIR/daemon.state.json" ]; then
+        echo "-- daemon state --"
+        sed -n '1,120p' "$CLAUDE_MOBILE_HAPPY_DIR/daemon.state.json"
+        echo
+
+        DAEMON_PID=$(sed -n 's/.*"pid": \([0-9][0-9]*\).*/\1/p' "$CLAUDE_MOBILE_HAPPY_DIR/daemon.state.json" | head -n 1)
+        if [ -n "${DAEMON_PID:-}" ]; then
+            if ps -p "$DAEMON_PID" >/dev/null 2>&1; then
+                echo "Daemon PID $DAEMON_PID is currently running."
+            else
+                echo "Daemon PID $DAEMON_PID is not running. The state file is stale."
+            fi
+            echo
+        fi
+    fi
+
+    LOG_FILE=$(latest_happy_log)
+    if [ -n "${LOG_FILE:-}" ]; then
+        echo "-- latest Happy log --"
+        echo "$LOG_FILE"
+        echo
+        echo "-- recent connection-related lines --"
+        show_connection_lines "$LOG_FILE"
+        echo
+        echo "-- last 40 log lines --"
+        tail -n 40 "$LOG_FILE"
+    else
+        echo "No Happy logs found under $CLAUDE_MOBILE_HAPPY_LOGS_DIR"
+    fi
+    exit 0
+fi
+
+if [ "${1:-}" = "netcheck" ]; then
+    exec singularity exec \
+        "${SINGULARITY_BASE_ARGS[@]}" \
+        "$CLAUDE_MOBILE_IMAGE" \
+        bash -lc '
+            set -e
+            echo "== proxy env =="
+            env | grep -i proxy || true
+            echo
+            echo "== dns =="
+            getent hosts api.cluster-fluster.com || true
+            echo
+            echo "== https =="
+            curl -I --max-time 10 https://api.cluster-fluster.com || true
+        '
+fi
+
+if [ "${1:-}" = "nodecheck" ]; then
+    exec singularity exec \
+        "${SINGULARITY_BASE_ARGS[@]}" \
+        "$CLAUDE_MOBILE_IMAGE" \
+        bash -lc '
+            set -e
+            echo "== proxy env =="
+            env | grep -i proxy || true
+            echo
+            echo "== node https test =="
+            node - <<'"'"'EOF'"'"'
+const https = require("node:https");
+
+const req = https.get("https://api.cluster-fluster.com", (res) => {
+  console.log("status:", res.statusCode);
+  console.log("headers:", JSON.stringify({
+    server: res.headers.server,
+    via: res.headers.via,
+    "content-type": res.headers["content-type"],
+  }, null, 2));
+  res.resume();
+  res.on("end", () => process.exit(0));
+});
+
+req.setTimeout(10000, () => {
+  console.error("timeout");
+  req.destroy(new Error("timeout"));
+});
+
+req.on("error", (err) => {
+  console.error("error:", err.message);
+  console.error("code:", err.code || "n/a");
+  process.exit(1);
+});
+EOF
+        '
+fi
+
+# Show the Happy pairing prompt (Mobile App / Web Browser) so this machine can be
+# linked to your Happy account. Run once before starting a session.
+if [ "${1:-}" = "--auth" ]; then
+    run_in_container_shell happy --auth
+fi
+
+if [ "${1:-}" = "auth" ]; then
+    shift
+    run_in_container_shell happy auth "$@"
+fi
+
+if [ "${1:-}" = "happy" ]; then
+    shift
+    run_in_container_shell happy "$@"
+fi
+
+# Run Claude Code directly, without the Happy mobile bridge.
+if [ "${1:-}" = "claude" ]; then
+    shift
+    run_in_container_shell claude "$@"
+fi
+
+if [ "${1:-}" = "raw" ]; then
+    shift
+    run_in_container_shell claude "$@"
+fi
+
+# Drop into an interactive shell without starting a session.
+if [ "${1:-}" = "shell" ]; then
+    open_container_shell
+fi
+
+# Default: start Claude Code directly (it has its own remote/web control), then
+# fall back to an interactive shell when it exits. Use the `happy` subcommand to
+# start a Happy-controlled session instead.
+run_in_container_shell claude "$@"
