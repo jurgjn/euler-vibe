@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# claude-launch -----------------------------------------------------------
+# Interactive front-end that helps you start a sandboxed Claude Code agent on
+# Euler. You pick the working directory the agent runs in, add any extra
+# directories it may read or read-write (with Tab path completion), review the
+# resulting sandbox, then launch it inside the Singularity container. It only
+# assembles --extra-bind / --extra-read-bind flags and execs claude-mobile, so
+# all of the real mount/proxy/container logic stays in bin/claude-mobile.
+
+CLAUDE_LAUNCH_BIN=$(realpath "$0")
+CLAUDE_LAUNCH_DIR=$(dirname "$(dirname "$CLAUDE_LAUNCH_BIN")")
+CLAUDE_MOBILE=$CLAUDE_LAUNCH_DIR/bin/claude-mobile
+CLAUDE_MOBILE_HOME=${CLAUDE_MOBILE_HOME:-$CLAUDE_LAUNCH_DIR/home/claude-mobile}
+CLAUDE_MOBILE_IMAGE=${CLAUDE_MOBILE_IMAGE:-$CLAUDE_LAUNCH_DIR/images/claude-mobile.sif}
+
+WORKSPACE=$(pwd)
+MODE=claude            # claude | happy | shell
+RW_BINDS=()
+RO_BINDS=()
+
+# --- colors / terminal control --------------------------------------------
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    BOLD=$'\033[1m'; DIM=$'\033[2m'; RST=$'\033[0m'
+    CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'
+    BLUE=$'\033[34m'; RED=$'\033[31m'; GREY=$'\033[90m'
+    EL=$'\033[K'      # erase to end of line (prevents leftover chars on redraw)
+else
+    BOLD= DIM= RST= CYAN= GREEN= YELLOW= BLUE= RED= GREY= EL=
+fi
+
+home()      { printf '\033[H'; }          # cursor to top-left (redraw in place)
+clr_down()  { printf '\033[0J'; }         # erase everything below the cursor
+cls()       { printf '\033[2J\033[3J\033[H'; }  # full clear incl. scrollback
+show_cursor() { [ -t 1 ] && printf '\033[?25h' || true; }
+hide_cursor() { [ -t 1 ] && printf '\033[?25l' || true; }
+trap 'show_cursor; printf "\n"' EXIT INT TERM
+
+# --- helpers ---------------------------------------------------------------
+
+# Expand a leading ~ and resolve to an absolute, normalized path.
+expand_path() {
+    local p=$1
+    case "$p" in
+        "~") p=$HOME ;;
+        "~/"*) p=$HOME/${p#"~/"} ;;
+    esac
+    realpath -m -- "$p"
+}
+
+prompt_dir() {
+    local label=$1 reply
+    show_cursor
+    read -e -r -p "$(printf '%s%s%s (Tab completes, empty to cancel): ' "$BOLD" "$label" "$RST")" reply || return 1
+    [ -n "$reply" ] || return 1
+    reply=$(expand_path "$reply")
+    if [ ! -d "$reply" ]; then
+        printf '%s  ! Not a directory: %s%s\n' "$RED" "$reply" "$RST" >&2
+        sleep 1
+        return 1
+    fi
+    printf '%s\n' "$reply"
+}
+
+prompt_dest() {
+    local src=$1 dest
+    show_cursor
+    read -e -r -p "  Mount inside container as [default: $src]: " dest || true
+    if [ -n "${dest:-}" ]; then printf '%s:%s\n' "$src" "$dest"; else printf '%s\n' "$src"; fi
+}
+
+pause() { show_cursor; read -r -p "$(printf '%s  (press Enter to continue)%s ' "$DIM" "$RST")" _ || true; }
+
+# --- arrow-key menu --------------------------------------------------------
+# menu_select "Prompt" "opt1" "opt2" ... -> sets MENU_CHOICE (0-based, -2 on q).
+# Selected row is marked with a green dot; the live config (render_header) stays
+# visible above. Redraws in place. Numbered prompt fallback when off-TTY.
+menu_select() {
+    local prompt=$1; shift
+    local options=("$@")
+    local n=${#options[@]}
+    local sel=${MENU_DEFAULT:-0}
+    MENU_DEFAULT=0
+
+    if [ ! -t 0 ]; then
+        render_header
+        echo "$prompt"
+        local i=1; for o in "${options[@]}"; do printf '  %d) %s\n' "$i" "$o"; i=$((i+1)); done
+        local choice; read -r -p "  Choose: " choice || { MENU_CHOICE=$((n-1)); return; }
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$n" ]; then
+            MENU_CHOICE=$((choice-1)); else MENU_CHOICE=-1; fi
+        return
+    fi
+
+    hide_cursor
+    local key rest i
+    while true; do
+        render_header
+        printf '  %s%s%s%s\n' "$DIM" "$prompt" "$RST" "$EL"
+        printf '  %s↑/↓ move · enter select · q quit%s%s\n\n' "$GREY" "$RST" "$EL"
+        for i in "${!options[@]}"; do
+            if [ "$i" -eq "$sel" ]; then
+                printf '   %s●%s %s%s%s%s\n' "$GREEN" "$RST" "$BOLD" "${options[$i]}" "$RST" "$EL"
+            else
+                printf '   %s·%s %s%s%s%s\n' "$GREY" "$RST" "$DIM" "${options[$i]}" "$RST" "$EL"
+            fi
+        done
+        clr_down
+        IFS= read -rsn1 key || true
+        case "$key" in
+            $'\x1b')
+                read -rsn2 -t 0.01 rest || true
+                case "$rest" in
+                    '[A') sel=$(( (sel - 1 + n) % n )) ;;
+                    '[B') sel=$(( (sel + 1) % n )) ;;
+                esac ;;
+            k|K) sel=$(( (sel - 1 + n) % n )) ;;
+            j|J) sel=$(( (sel + 1) % n )) ;;
+            q|Q) MENU_CHOICE=-2; show_cursor; return ;;
+            '')  MENU_CHOICE=$sel; show_cursor; return ;;
+        esac
+    done
+}
+
+# --- screens ---------------------------------------------------------------
+
+render_header() {
+    home
+    printf '  %s╭────────────────────────────────────────────────────────╮%s%s\n' "$CYAN" "$RST" "$EL"
+    printf '  %s│%s  %s● claude-launch%s   %sstart a sandboxed Claude Code agent%s  %s│%s%s\n' \
+        "$CYAN" "$RST" "$BOLD$GREEN" "$RST" "$DIM" "$RST" "$CYAN" "$RST" "$EL"
+    printf '  %s╰────────────────────────────────────────────────────────╯%s%s\n' "$CYAN" "$RST" "$EL"
+    printf '%s\n' "$EL"
+    printf '  %sMode%s       %s%s%s%s\n' "$BOLD" "$RST" "$GREEN" "$MODE" "$RST" "$EL"
+    printf '%s\n' "$EL"
+    printf '  %sWorkspace%s  %s%s%s%s\n' "$BOLD" "$RST" "$YELLOW" "$WORKSPACE" "$RST" "$EL"
+    printf '             %s↳ Claude runs here and can read & edit files%s%s\n' "$DIM" "$RST" "$EL"
+    printf '%s\n' "$EL"
+    printf '  %sRead-write dirs%s  %s(Claude can read & write files here)%s%s\n' "$BOLD" "$RST" "$DIM" "$RST" "$EL"
+    if [ ${#RW_BINDS[@]} -eq 0 ]; then
+        printf '    %s(none)%s%s\n' "$DIM" "$RST" "$EL"
+    else
+        local i=1; for b in "${RW_BINDS[@]}"; do printf '    %s●%s %s%s\n' "$GREEN" "$RST" "$b" "$EL"; i=$((i+1)); done
+    fi
+    printf '  %sRead-only dirs%s   %s(Claude can only read from here)%s%s\n' "$BOLD" "$RST" "$DIM" "$RST" "$EL"
+    if [ ${#RO_BINDS[@]} -eq 0 ]; then
+        printf '    %s(none)%s%s\n' "$DIM" "$RST" "$EL"
+    else
+        local i=1; for b in "${RO_BINDS[@]}"; do printf '    %s●%s %s%s\n' "$BLUE" "$RST" "$b" "$EL"; i=$((i+1)); done
+    fi
+    printf '%s\n' "$EL"
+}
+
+build_cmd_args() {
+    local b
+    for b in "${RW_BINDS[@]}"; do printf '%s\n%s\n' "--extra-bind" "$b"; done
+    for b in "${RO_BINDS[@]}"; do printf '%s\n%s\n' "--extra-read-bind" "$b"; done
+    case "$MODE" in
+        happy) printf '%s\n' "happy" ;;
+        shell) printf '%s\n' "shell" ;;
+        claude) : ;;
+    esac
+}
+
+review_command() {
+    render_header
+    printf '  %sWould launch:%s%s\n' "$BOLD" "$RST" "$EL"
+    printf '    %scd %s%s%s\n' "$DIM" "$WORKSPACE" "$RST" "$EL"
+    printf '    %s%s%s' "$CYAN" "$CLAUDE_MOBILE" "$RST"
+    while IFS= read -r a; do printf ' %q' "$a"; done < <(build_cmd_args)
+    printf '%s\n%s\n' "$EL" "$EL"
+    clr_down
+    pause
+}
+
+remove_bind() {
+    [ ${#RW_BINDS[@]} -gt 0 ] || [ ${#RO_BINDS[@]} -gt 0 ] || { render_header; echo "  (no extra binds to remove)"; clr_down; pause; return; }
+    local labels=() map=() i
+    for i in "${!RW_BINDS[@]}"; do labels+=("rw: ${RW_BINDS[$i]}"); map+=("w:$i"); done
+    for i in "${!RO_BINDS[@]}"; do labels+=("ro: ${RO_BINDS[$i]}"); map+=("r:$i"); done
+    labels+=("(cancel)"); map+=("cancel")
+    menu_select "Select a bind to remove:" "${labels[@]}"
+    [ "${MENU_CHOICE}" -ge 0 ] 2>/dev/null || return
+    local entry=${map[$MENU_CHOICE]}
+    case "$entry" in
+        cancel) return ;;
+        w:*) local idx=${entry#w:}; unset 'RW_BINDS[idx]'; RW_BINDS=("${RW_BINDS[@]}") ;;
+        r:*) local idx=${entry#r:}; unset 'RO_BINDS[idx]'; RO_BINDS=("${RO_BINDS[@]}") ;;
+    esac
+}
+
+change_mode() {
+    menu_select "Pick how Claude Code starts:" \
+        "claude  — Claude Code directly (default)" \
+        "happy   — Happy-controlled session (mobile/web attach)" \
+        "shell   — plain interactive container shell"
+    case "${MENU_CHOICE}" in
+        0) MODE=claude ;;
+        1) MODE=happy ;;
+        2) MODE=shell ;;
+    esac
+}
+
+launch() {
+    local args=()
+    while IFS= read -r a; do args+=("$a"); done < <(build_cmd_args)
+    render_header
+    printf '  %sLaunching…%s%s\n' "$GREEN" "$RST" "$EL"
+    clr_down
+    show_cursor
+    cd "$WORKSPACE"
+    exec "$CLAUDE_MOBILE" "${args[@]}"
+}
+
+# --- main loop -------------------------------------------------------------
+
+if [ ! -x "$CLAUDE_MOBILE" ]; then
+    echo "claude-mobile launcher not found/executable at: $CLAUDE_MOBILE" >&2
+    exit 1
+fi
+
+cls
+while true; do
+    menu_select "Main menu:" \
+        "Add read-write directory" \
+        "Add read-only directory" \
+        "Change workspace directory" \
+        "Remove an extra bind" \
+        "Change mode (claude / happy / shell)" \
+        "Review launch command" \
+        "Launch ▶" \
+        "Quit"
+    case "${MENU_CHOICE}" in
+        0) if src=$(prompt_dir "Read-write directory"); then RW_BINDS+=("$(prompt_dest "$src")"); fi ;;
+        1) if src=$(prompt_dir "Read-only directory"); then RO_BINDS+=("$(prompt_dest "$src")"); fi ;;
+        2) if ws=$(prompt_dir "Workspace directory"); then WORKSPACE=$ws; fi ;;
+        3) remove_bind ;;
+        4) change_mode ;;
+        5) review_command ;;
+        6) launch ;;
+        7|-2) cls; printf '%s  Bye.%s\n' "$DIM" "$RST"; exit 0 ;;
+        *) : ;;
+    esac
+done

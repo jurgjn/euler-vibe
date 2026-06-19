@@ -24,6 +24,10 @@ codex-mobile
 Happy's Quick Start guide was last updated on March 23, 2026 and still shows `npm install -g happy-coder`, but the current upstream Happy README now says the package moved to `happy`. This image builds Happy CLI `1.1.7` from the public `slopus/happy` source and applies a small local patch so `codex-mobile` can use a proxy-aware websocket agent on proxy-restricted clusters instead of assuming direct websocket connectivity.
 
 ## Claude Code:
+
+For an interactive setup, run `claude-launch`: an arrow-key menu that lets you pick the workspace, add read-only / read-write directories (with Tab completion) the agent may access, review the sandbox, and launch it. It just assembles the flags below and calls `claude-mobile`.
+
+To run directly:
 ```
 claude-mobile
 ```
