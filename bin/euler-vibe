@@ -2,9 +2,14 @@
 
 set -euo pipefail
 
+# https://docs.hpc.ethz.ch/news/AMD_Instinct_MI300A_evaluation/?h=amd#access
+#export SLURM_CONF=/cluster/adm/slurm-amdgpu/slurm/etc/slurm.conf
+
 # Used to infer locations of config/images/models
-EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
-echo EU_VIBE_DIR is $EU_VIBE_DIR
+export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
+export EU_VIBE_MODEL=Qwen/Qwen3.6-27B-FP8
+
+#echo EU_VIBE_DIR is $EU_VIBE_DIR
 
 usage() {
     cat <<EOF
@@ -14,9 +19,13 @@ Usage:
 Commands:
     list    List available models
     pull    Download model from Hugging Face
+    serve   Start batch job serving a model
+    scancel Stop serve
+    status  Show running jobs
 
 Examples:
     euler-vibe pull Qwen/Qwen3.6-27B
+    euler-vibe serve --time=00:10:00
 
 EOF
 }
@@ -35,8 +44,50 @@ cmd_pull() {
         lfs clone https://huggingface.co/"$@" "$@"
 }
 
+cmd_serve() {
+    mkdir -p $EU_VIBE_DIR/logs
+    export EULER_VIBE_LOGS="$EU_VIBE_DIR/logs/serve-%j.out"
+    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve/qwen3.6-27b_rtx_pro_6000.sbatch
+}
+
+cmd_scancel() {
+    EU_VIBE_SERVE_JOBID=$(squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk '$3 ~ /^euler-vibe/ {print $1}')
+    echo EU_VIBE_SERVE_JOBID is $EU_VIBE_SERVE_JOBID
+    scancel $EU_VIBE_SERVE_JOBID
+}
+
 cmd_status() {
     squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk 'NR==1 || $3 ~ /^euler-vibe/' | column -t --table-right 1,5,6
+    echo
+
+    EU_VIBE_SERVE_JOBID=$(squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk '$3 ~ /^euler-vibe/ {print $1}')
+    export HEAD_NAME=$(scontrol show hostnames $(squeue -j $EU_VIBE_SERVE_JOBID -h -o "%N") | head -n 1)
+    export BASE_URL="http://$HEAD_NAME:8000/v1/chat/completions"
+    export LOCAL_PORT=12346
+    echo SSH tunnel:
+    echo ssh -N -L $LOCAL_PORT:$HEAD_NAME:8001 euler.ethz.ch
+    echo 
+    echo OpenAI API:
+    echo export OPENAI_API_BASE="http://localhost:$LOCAL_PORT/v1"
+    echo export OPENAI_API_KEY=
+    echo 
+    echo Anthropic API:
+    echo export ANTHROPIC_BASE_URL="http://localhost:$LOCAL_PORT/"
+    echo export ANTHROPIC_API_KEY=
+    echo export ANTHROPIC_AUTH_TOKEN=
+    echo export ANTHROPIC_DEFAULT_OPUS_MODEL=$EU_VIBE_MODEL
+    echo export ANTHROPIC_DEFAULT_SONNET_MODEL=$EU_VIBE_MODEL
+    echo export ANTHROPIC_DEFAULT_HAIKU_MODEL=$EU_VIBE_MODEL
+    echo
+    #echo ssh -N -L 8000:$HEAD_NAME:8000 euler.ethz.ch
+    # curl -s https://localhost:12345/v1/chat/completions -H "Content-Type: application/json" -d '{"model": "Qwen/Qwen3.6-27B", "messages": [{"role": "user", "content": "Write a haiku about protein-protein interactions"}]}' | jq .
+
+    #echo Asking for haiku:
+    #curl -s http://${HEAD_NAME}:8000/v1/chat/completions \
+    #    -H "Content-Type: application/json" \
+    #    -d '{"model": "Qwen/Qwen3.6-27B-FP8", "messages": [{"role": "user", "content": "Write a haiku about protein-protein interactions"}]}' \
+    #    | jq .
+    
 }
 
 main() {
@@ -52,6 +103,12 @@ main() {
             ;;
         pull)
             cmd_pull "$@"
+            ;;
+        serve)
+            cmd_serve "$@"
+            ;;
+        scancel)
+            cmd_scancel "$@"
             ;;
         status)
             cmd_status "$@"
