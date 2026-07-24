@@ -25,7 +25,7 @@ Happy's Quick Start guide was last updated on March 23, 2026 and still shows `np
 
 ## Claude Code:
 
-For an interactive setup, run `claude-launch`: an arrow-key menu that lets you pick the workspace, add read-only / read-write directories (with Tab completion) the agent may access, review the sandbox, and launch it. It just assembles the flags below and calls `claude-mobile`.
+For an interactive setup, run `claude-launch`: an arrow-key menu that lets you pick the workspace, the home directory (persistent auth/session state), add read-only / read-write directories (with Tab completion) the agent may access, review the sandbox, and launch it. It just assembles the flags below and calls `claude-mobile`. Changing the home directory sets `CLAUDE_MOBILE_HOME` for the launched session, so you can keep isolated homes (separate logins, history, and Claude installs) per project or experiment.
 
 To run directly:
 ```
@@ -40,7 +40,16 @@ claude-mobile --auth     # one-time: pair this machine with Happy
 claude-mobile happy      # start a Happy-controlled Claude session
 ```
 
-Other subcommands: `claude`/`raw` (Claude directly), `shell` (plain container shell), `logs`, `doctor`, `netcheck`, `nodecheck`. Like `codex-mobile`, it accepts `--extra-bind SRC[:DEST]` and `--extra-read-bind SRC[:DEST]` wrapper flags before the subcommand. Auth, session state, and Happy pairing are stored under `$CLAUDE_MOBILE_HOME` (see [script](bin/claude-mobile)).
+Other subcommands: `claude`/`raw` (Claude directly), `shell` (plain container shell), `logs`, `doctor`, `netcheck`, `nodecheck`. Like `codex-mobile`, it accepts `--extra-bind SRC[:DEST]` and `--extra-read-bind SRC[:DEST]` wrapper flags before the subcommand. Auth, session state, and Happy pairing are stored under `$CLAUDE_MOBILE_HOME` (default `home/claude-mobile`), which is bound to the container's `/home` (see [script](bin/claude-mobile)).
+
+### Keeping Claude up to date
+
+Claude Code is `npm install`ed into the image at build time, but the image's `/usr` is read-only, so Claude's own auto-updater can't write there (it logs an `npm install_failed` and stays on the bundled version). To make updates work, the container shellrc bootstraps a **native, self-updatable** build under `$HOME/.local` (i.e. `$CLAUDE_MOBILE_HOME/.local`, which persists across sessions and image rebuilds) and puts it ahead of the bundled build on `PATH`:
+
+- On first launch, if no native install exists yet, `claude install latest` runs once (safe before login; it only downloads the build). Afterwards `~/.local/bin/claude` shadows the bundled `/usr/bin/claude`.
+- From then on `claude update` and the automatic updater work normally, because they write to the persistent `/home` rather than read-only `/usr`.
+
+Each `CLAUDE_MOBILE_HOME` gets its own native install and update state. Rebuilding the image is still worthwhile occasionally to refresh Node, Happy, and system packages, which the Claude self-updater does not touch.
 
 Build note: on proxy-restricted clusters the image installs `pnpm` via `npm` (corepack ignores the proxy) and sets `ELECTRON_SKIP_BINARY_DOWNLOAD=1` (Happy 1.1.8 added an electron package whose postinstall otherwise fetches a binary directly). If `mksquashfs` aborts at the final packing step under a tight job memory limit, cap it: `singularity build --mksquashfs-args "-processors 4 -mem 2048M" images/claude-mobile.sif images/claude-mobile.def`.
 
