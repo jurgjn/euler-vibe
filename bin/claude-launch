@@ -50,12 +50,13 @@ expand_path() {
 }
 
 prompt_dir() {
-    local label=$1 reply
+    local label=$1 allow_missing=${2:-} reply
     show_cursor
     read -e -r -p "$(printf '%s%s%s (Tab completes, empty to cancel): ' "$BOLD" "$label" "$RST")" reply || return 1
     [ -n "$reply" ] || return 1
     reply=$(expand_path "$reply")
-    if [ ! -d "$reply" ]; then
+    # `allow_missing` is used for the home dir, which claude-mobile creates on launch.
+    if [ ! -d "$reply" ] && [ -z "$allow_missing" ]; then
         printf '%s  ! Not a directory: %s%s\n' "$RED" "$reply" "$RST" >&2
         sleep 1
         return 1
@@ -137,6 +138,9 @@ render_header() {
     printf '  %sWorkspace%s  %s%s%s%s\n' "$BOLD" "$RST" "$YELLOW" "$WORKSPACE" "$RST" "$EL"
     printf '             %s↳ Claude runs here and can read & edit files%s%s\n' "$DIM" "$RST" "$EL"
     printf '%s\n' "$EL"
+    printf '  %sHome%s       %s%s%s%s\n' "$BOLD" "$RST" "$CYAN" "$CLAUDE_MOBILE_HOME" "$RST" "$EL"
+    printf '             %s↳ persistent auth, config & session state (container /home)%s%s\n' "$DIM" "$RST" "$EL"
+    printf '%s\n' "$EL"
     printf '  %sRead-write dirs%s  %s(Claude can read & write files here)%s%s\n' "$BOLD" "$RST" "$DIM" "$RST" "$EL"
     if [ ${#RW_BINDS[@]} -eq 0 ]; then
         printf '    %s(none)%s%s\n' "$DIM" "$RST" "$EL"
@@ -167,6 +171,7 @@ review_command() {
     render_header
     printf '  %sWould launch:%s%s\n' "$BOLD" "$RST" "$EL"
     printf '    %scd %s%s%s\n' "$DIM" "$WORKSPACE" "$RST" "$EL"
+    printf '    %sCLAUDE_MOBILE_HOME=%s%s \\%s\n' "$DIM" "$CLAUDE_MOBILE_HOME" "$RST" "$EL"
     printf '    %s%s%s' "$CYAN" "$CLAUDE_MOBILE" "$RST"
     while IFS= read -r a; do printf ' %q' "$a"; done < <(build_cmd_args)
     printf '%s\n%s\n' "$EL" "$EL"
@@ -209,6 +214,9 @@ launch() {
     printf '  %sLaunching…%s%s\n' "$GREEN" "$RST" "$EL"
     clr_down
     show_cursor
+    # Pass the chosen home through to claude-mobile, which reads it as
+    # ${CLAUDE_MOBILE_HOME:-<default>} and binds it to the container's /home.
+    export CLAUDE_MOBILE_HOME
     cd "$WORKSPACE"
     exec "$CLAUDE_MOBILE" "${args[@]}"
 }
@@ -226,6 +234,7 @@ while true; do
         "Add read-write directory" \
         "Add read-only directory" \
         "Change workspace directory" \
+        "Change home directory (persistent auth/session state)" \
         "Remove an extra bind" \
         "Change mode (claude / happy / shell)" \
         "Review launch command" \
@@ -235,11 +244,12 @@ while true; do
         0) if src=$(prompt_dir "Read-write directory"); then RW_BINDS+=("$(prompt_dest "$src")"); fi ;;
         1) if src=$(prompt_dir "Read-only directory"); then RO_BINDS+=("$(prompt_dest "$src")"); fi ;;
         2) if ws=$(prompt_dir "Workspace directory"); then WORKSPACE=$ws; fi ;;
-        3) remove_bind ;;
-        4) change_mode ;;
-        5) review_command ;;
-        6) launch ;;
-        7|-2) cls; printf '%s  Bye.%s\n' "$DIM" "$RST"; exit 0 ;;
+        3) if hd=$(prompt_dir "Home directory" allow-missing); then CLAUDE_MOBILE_HOME=$hd; fi ;;
+        4) remove_bind ;;
+        5) change_mode ;;
+        6) review_command ;;
+        7) launch ;;
+        8|-2) cls; printf '%s  Bye.%s\n' "$DIM" "$RST"; exit 0 ;;
         *) : ;;
     esac
 done
