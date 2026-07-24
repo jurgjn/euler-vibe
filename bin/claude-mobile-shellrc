@@ -1,10 +1,28 @@
 export PS1='(claude-mobile) \w \$ '
 
+# Prefer a persistent, self-updatable Claude install over the read-only npm build
+# baked into the image. /home is a persistent bind mount, so anything under
+# ~/.local survives across sessions and image rebuilds. The bundled build lives in
+# read-only /usr and can therefore never self-update ("npm auto-update failed");
+# a native build under ~/.local can, via `claude update` / the auto-updater.
+export PATH="$HOME/.local/bin:$PATH"
+
+# One-time bootstrap: if no native install exists yet, create one using the
+# bundled claude. Afterwards ~/.local/bin/claude shadows /usr/bin/claude and
+# updates work. Safe before login (it only downloads the build). Re-runs on the
+# next launch if it fails, so it self-heals.
+if [ ! -x "$HOME/.local/bin/claude" ] && command -v claude >/dev/null 2>&1; then
+    echo "claude-mobile: installing self-updatable native build to ~/.local (one-time)…"
+    command claude install latest \
+        || echo "claude-mobile: 'claude install' failed; using bundled build for now."
+    hash -r
+fi
+
 # Run Claude Code directly (no Happy). --dangerously-skip-permissions because the
 # default sandbox does not run inside apptainer; management subcommands pass through.
 claude() {
     case "${1:-}" in
-        config|mcp|update|doctor|install|migrate-installer|--help|-h|--version|-v)
+        config|mcp|update|doctor|install|--help|-h|--version|-v)
             command claude "$@"
             ;;
         *)
