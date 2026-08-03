@@ -16,6 +16,12 @@ export EU_VIBE_PORT=27182
 
 # EU_VIBE_DIR expected from euler-vibe wrapper
 echo EU_VIBE_DIR is $EU_VIBE_DIR
+
+# https://hub.docker.com/r/vllm/vllm-openai/tags
+export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai_v0.26.0-x86_64.sif
+
+# There are two secondary wins from FP8 on your hardware that matter almost as much as raw speed.
+# First, KV-cache headroom: 27 GB of freed VRAM across the node means you can actually sustain long contexts at 256K without starving the cache.
 export EU_VIBE_MODEL=Qwen/Qwen3.6-27B-FP8
 
 #srun bash <<'EOF'
@@ -40,13 +46,16 @@ ARGS=(
     --env HF_HUB_OFFLINE=1
     #--env VLLM_DISABLE_COMPILE_CACHE=1
 
+    # Enable expandable segments to kill the fragmentation loss.
+    --env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
     # Specifically add an extra bind mount for /tmp as Apptainer default is too small
     --home $TMPDIR/home:/home
     --bind $TMPDIR/models:/models:ro --cwd /models
     --bind $TMPDIR/tmp:/tmp
     --overlay $TMPDIR/overlay
 
-    $EU_VIBE_DIR/images/vllm-openai_v0.25.1-x86_64.sif
+    $EU_VIBE_SIF
     $EU_VIBE_MODEL
 
     # https://recipes.vllm.ai/Qwen/Qwen3.6-27B
@@ -57,11 +66,33 @@ ARGS=(
     --reasoning-parser qwen3
     --language-model-only
 
+    # https://huggingface.co/Qwen/Qwen3.6-27B
+    # Thinking mode for precise coding tasks (e.g. WebDev)
+    --override-generation-config.temperature 0.6
+    --override-generation-config.top_p 0.95
+    --override-generation-config.top_k 20
+    --override-generation-config.min_p 0.0
+    --override-generation-config.presence_penalty 0.0
+    --override-generation-config.repetition_penalty 1.0
+
+    --max-model-len 262144
+
+    #--gpu-memory-utilization 0.92
+    # Give the KV cache an explicit, smaller budget
+    --kv-cache-memory 12000000000
+
+    --max-num-seqs 32
+    --max-num-batched-tokens 8192
+
     # Prefix caching is clearly paying off (hit rates climbing to 85%+)
     --enable-prefix-caching
 
-    --gpu-memory-utilization 0.95
-    --max-model-len 262144
+    # Start with 2 as a sane default on 4090s; going to 3 buys a bit more single-stream speed but costs more wasted compute at higher concurrency.
+    --speculative-config.method mtp
+    --speculative-config.num_speculative_tokens 3
+
+    # If you ever want calibrated scales, they can be generated with llm-compressor and baked into a checkpoint, but I wouldn't bother unless you observe quality degradation at long context.
+    --kv-cache-dtype fp8
 
     # expected on this hardware and there's not much to do beyond adding --disable-custom-all-reduce to silence the warning
     --disable-custom-all-reduce
