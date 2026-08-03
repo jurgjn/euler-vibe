@@ -2,18 +2,23 @@
 #SBATCH --job-name=euler-vibe-serve
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=24
-#SBATCH --mem-per-cpu=8G
-#SBATCH --gpus=nvidia_rtx_pro_6000:1
-#SBATCH --time=0-01:00:00
-#SBATCH --tmp=64G
+#SBATCH --cpus-per-task=64
+#SBATCH --mem-per-cpu=4G
+#SBATCH --gpus=rtx_4090:4
+#SBATCH --time=0-12:00:00
+#SBATCH --account=es_beltrao
+#SBATCH --tmp=128G
 
 set -x -e -u -o pipefail
+
+export EU_VIBE_DIR=$(dirname $(dirname $(which euler-vibe)))
+export EU_VIBE_PORT=27182
 
 # EU_VIBE_DIR expected from euler-vibe wrapper
 echo EU_VIBE_DIR is $EU_VIBE_DIR
 export EU_VIBE_MODEL=Qwen/Qwen3.6-27B-FP8
 
+srun bash <<'EOF'
 export FROM="$(hostname) ${SLURM_NODEID}/${SLURM_NNODES}:"
 export HEAD_NAME=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export HEAD_ADDR=$(host $HEAD_NAME | awk '{ print $NF }' )
@@ -33,18 +38,15 @@ ARGS=(
     --env HF_DATASETS_OFFLINE=1
     --env TRANSFORMERS_OFFLINE=1
     --env HF_HUB_OFFLINE=1
-
-    # Set cache location
-    --env VLLM_CACHE_ROOT=/cache
+    #--env VLLM_DISABLE_COMPILE_CACHE=1
 
     # Specifically add an extra bind mount for /tmp as Apptainer default is too small
     --home $TMPDIR/home:/home
     --bind $TMPDIR/models:/models:ro --cwd /models
     --bind $TMPDIR/tmp:/tmp
     --overlay $TMPDIR/overlay
-    --bind $EU_VIBE_DIR/cache:/cache
 
-    $EU_VIBE_DIR/images/vllm-openai_v0.23.0.sif
+    $EU_VIBE_DIR/images/vllm-openai_v0.25.1-x86_64.sif
     $EU_VIBE_MODEL
 
     # https://recipes.vllm.ai/Qwen/Qwen3.6-27B
@@ -55,27 +57,18 @@ ARGS=(
     --reasoning-parser qwen3
     --language-model-only
 
-    --speculative-config.method mtp
-    --speculative-config.num_speculative_tokens 2
+    # Prefix caching is clearly paying off (hit rates climbing to 85%+)
+    --enable-prefix-caching
 
-    --gpu-memory-utilization 0.92
+    --gpu-memory-utilization 0.95
     --max-model-len 262144
-    --enable-chunked-prefill
-    --max-num-seqs 16
 
-    # https://huggingface.co/Qwen/Qwen3.6-27B
-    --override-generation-config.temperature 0.6
-    --override-generation-config.top_p 0.95
-    --override-generation-config.top_k 20
-    --override-generation-config.min_p 0.0
-    --override-generation-config.presence_penalty 0.0
-    --override-generation-config.repetition_penalty 1.0
+    # expected on this hardware and there's not much to do beyond adding --disable-custom-all-reduce to silence the warning
+    --disable-custom-all-reduce
 
     # Allow connections to vllm from other machines
     --host 0.0.0.0
-    --port 8001
-
-    # https://github.com/local-inference-lab/rtx6kpro/blob/master/models/qwen35-27b.md
+    --port $EU_VIBE_PORT
 )
 echo ${FROM} ARGS is "${ARGS[@]}"
 
@@ -86,12 +79,9 @@ export MODEL_DST=$TMPDIR/models/$EU_VIBE_MODEL
 echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
     --exclude ".git/" \
-    --progress --stats 1m \
-    --multi-thread-streams=$SLURM_CPUS_PER_TASK \
-    --transfers=$SLURM_CPUS_PER_TASK \
-    --checkers=$SLURM_CPUS_PER_TASK \
-    --multi-thread-streams=4 \
-    --multi-thread-cutoff=64M
+    --progress --stats 2m \
+    --multi-thread-streams=$SLURM_CPUS_PER_TASK
 
 echo ${FROM} Starting vllm container
 exec singularity run "${ARGS[@]}"
+EOF

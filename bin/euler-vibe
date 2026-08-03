@@ -7,7 +7,7 @@ set -euo pipefail
 
 # Used to infer locations of config/images/models
 export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
-export EU_VIBE_MODEL=Qwen/Qwen3.6-27B-FP8
+#export EU_VIBE_MODEL=Qwen/Qwen3.6-27B-FP8
 
 #echo EU_VIBE_DIR is $EU_VIBE_DIR
 
