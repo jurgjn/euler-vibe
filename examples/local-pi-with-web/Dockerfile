@@ -118,12 +118,141 @@ EOF
 
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
+# NOTE: the previous `npm:pi-model-discovery` (no "s") is a different, older
+# package (0.3.x). This is the current one, pinned so the patch step below
+# always targets a known layout.
+RUN pi install npm:pi-models-discovery@1.0.1
+
 #RUN pi install npm:pi-web-extension
 
 #RUN npm install -g agent-browser
 #RUN pi install npm:pi-agent-browser-native
 
 RUN pi install npm:pi-web-access
+
+# Strip pi-extensions-i18n out of pi-models-discovery, keeping English only:
+#   1. package.json: drop "../pi-extensions-i18n/index.ts" from the pi.extensions
+#      manifest (pi reads this at load time) and the npm dependency.
+#   2. locales/index.json: flatten {key: {zh-CN, en-US}} to {key: en-US string}.
+#   3. src/index.ts: replace the pi-extensions-i18n import with a tiny inline
+#      English-only t() that does the same {placeholder} interpolation.
+#   4. package-lock.json: remove the i18n entries so a later `pi install` /
+#      `pi update` inside the container can't resurrect the orphaned package.
+#   5. Delete node_modules/pi-extensions-i18n and the zh-CN README.
+# Every expectation is asserted; if a future version bump changes the layout,
+# the build fails here instead of silently shipping an unpatched extension.
+# Must run AFTER all `pi install` lines (each one re-runs npm in ~/.pi/agent/npm).
+RUN python3 - <<'EOF'
+import json, sys, os, shutil
+
+PKG = "/root/.pi/agent/npm/node_modules/pi-models-discovery"
+
+def die(msg):
+    sys.exit(f"patch-models-discovery: FATAL: {msg}")
+
+# --- 1. package.json: drop the i18n manifest entry and the npm dependency ---
+pj_path = os.path.join(PKG, "package.json")
+with open(pj_path, encoding="utf-8") as f:
+    pj = json.load(f)
+
+exts = pj.get("pi", {}).get("extensions")
+if exts != ["./index.ts", "../pi-extensions-i18n/index.ts"]:
+    die(f"unexpected pi.extensions manifest: {exts!r}")
+pj["pi"]["extensions"] = ["./index.ts"]
+
+deps = pj.get("dependencies", {})
+if "pi-extensions-i18n" not in deps:
+    die(f"pi-extensions-i18n not in dependencies: {deps!r}")
+del deps["pi-extensions-i18n"]
+if not deps:
+    del pj["dependencies"]
+
+with open(pj_path, "w", encoding="utf-8") as f:
+    json.dump(pj, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+
+# --- 2. locales/index.json: flatten {key: {zh-CN, en-US}} -> {key: en-US} ---
+loc_path = os.path.join(PKG, "locales", "index.json")
+with open(loc_path, encoding="utf-8") as f:
+    catalog = json.load(f)
+
+flat = {}
+for key, entry in catalog.items():
+    if not isinstance(entry, dict) or "en-US" not in entry:
+        die(f"locale entry {key!r} has no en-US translation")
+    flat[key] = entry["en-US"]
+
+with open(loc_path, "w", encoding="utf-8") as f:
+    json.dump(flat, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+
+# --- 3. src/index.ts: swap the i18n library for an inline English-only t() ---
+src_path = os.path.join(PKG, "src", "index.ts")
+with open(src_path, encoding="utf-8") as f:
+    src = f.read()
+
+OLD = (
+    'import { createTranslator, loadCatalog } from "pi-extensions-i18n";\n'
+    '\n'
+    'const i18n = createTranslator(loadCatalog(new URL("../locales/index.json", import.meta.url)));\n'
+)
+NEW = (
+    'import { readFileSync } from "node:fs";\n'
+    'import { fileURLToPath } from "node:url";\n'
+    '\n'
+    '// English-only messages; pi-extensions-i18n removed at image build time.\n'
+    'const MESSAGES: Record<string, string> = JSON.parse(\n'
+    '\treadFileSync(fileURLToPath(new URL("../locales/index.json", import.meta.url)), "utf8"),\n'
+    ');\n'
+    'const i18n = {\n'
+    '\tt(key: string, params?: Record<string, string | number>): string {\n'
+    '\t\tconst template = MESSAGES[key];\n'
+    '\t\tif (template === undefined) throw new Error(`Unknown message key: ${key}`);\n'
+    '\t\treturn template.replace(/\\{([A-Za-z0-9_]+)\\}/g, (ph, name: string) => {\n'
+    '\t\t\tconst value = params?.[name];\n'
+    '\t\t\tif (value === undefined) throw new Error(`Missing interpolation value for ${ph}`);\n'
+    '\t\t\treturn String(value);\n'
+    '\t\t});\n'
+    '\t},\n'
+    '};\n'
+)
+if src.count(OLD) != 1:
+    die("expected i18n import block not found exactly once in src/index.ts")
+src = src.replace(OLD, NEW)
+if 'from "pi-extensions-i18n"' in src:
+    die("src/index.ts still imports pi-extensions-i18n after patch")
+
+with open(src_path, "w", encoding="utf-8") as f:
+    f.write(src)
+
+# --- 4. clean the pi npm lockfile so later `pi install`/`pi update` runs
+#        don't resurrect the orphaned i18n package ---
+lock_path = os.path.normpath(os.path.join(PKG, "..", "..", "package-lock.json"))
+if os.path.exists(lock_path):
+    with open(lock_path, encoding="utf-8") as f:
+        lock = json.load(f)
+    pkgs = lock.get("packages", {})
+    pkgs.pop("node_modules/pi-extensions-i18n", None)
+    entry = pkgs.get("node_modules/pi-models-discovery", {})
+    entry_deps = entry.get("dependencies", {})
+    entry_deps.pop("pi-extensions-i18n", None)
+    if not entry_deps:
+        entry.pop("dependencies", None)
+    with open(lock_path, "w", encoding="utf-8") as f:
+        json.dump(lock, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+# --- 5. remove the now-orphaned i18n package and the Chinese README ---
+i18n_dir = os.path.normpath(os.path.join(PKG, "..", "pi-extensions-i18n"))
+if os.path.isdir(i18n_dir):
+    shutil.rmtree(i18n_dir)
+
+zh_readme = os.path.join(PKG, "README.zh-CN.md")
+if os.path.exists(zh_readme):
+    os.remove(zh_readme)
+
+print("patch-models-discovery: OK (i18n removed, English-only)")
+EOF
 
 COPY models.json /root/.pi/agent/models.json
 
