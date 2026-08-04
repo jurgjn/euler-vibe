@@ -7,9 +7,7 @@ set -euo pipefail
 
 # Used to infer locations of config/images/models
 export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
-#export EU_VIBE_MODEL=Qwen/Qwen3.6-27B-FP8
-
-#echo EU_VIBE_DIR is $EU_VIBE_DIR
+export EU_VIBE_PORT=27182
 
 usage() {
     cat <<EOF
@@ -48,6 +46,13 @@ cmd_serve() {
     mkdir -p $EU_VIBE_DIR/logs
     export EULER_VIBE_LOGS="$EU_VIBE_DIR/logs/serve-%j.out"
     sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve/qwen3.6-27b_rtx_pro_6000.sbatch
+}
+
+cmd_serve_local() {
+    $EU_VIBE_DIR/serve/dsv4-flash_pro_6000.sh
+    #mkdir -p $EU_VIBE_DIR/logs
+    #export EULER_VIBE_LOGS="$EU_VIBE_DIR/logs/serve-%j.out"
+    #sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve/qwen3.6-27b_rtx_pro_6000.sbatch
 }
 
 cmd_scancel() {
@@ -106,6 +111,9 @@ main() {
             ;;
         serve)
             cmd_serve "$@"
+            ;;
+        serve_local)
+            cmd_serve_local "$@"
             ;;
         scancel)
             cmd_scancel "$@"
