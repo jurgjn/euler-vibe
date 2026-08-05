@@ -79,7 +79,7 @@ ARGS=(
 
     #--gpu-memory-utilization 0.92
     # Give the KV cache an explicit, smaller budget
-    --kv-cache-memory 12000000000
+    --kv-cache-memory 12884901888
 
     --max-num-seqs 32
     --max-num-batched-tokens 8192
@@ -110,8 +110,10 @@ export MODEL_DST=$TMPDIR/models/$EU_VIBE_MODEL
 echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
     --exclude ".git/" \
-    --progress --stats 2m \
-    --multi-thread-streams=$SLURM_CPUS_PER_TASK
+    --progress --stats 1m \
+    --transfers=4 \
+    --multi-thread-streams=8 \
+    --multi-thread-cutoff=64M
 
 echo ${FROM} Starting vllm container
 exec singularity run "${ARGS[@]}"

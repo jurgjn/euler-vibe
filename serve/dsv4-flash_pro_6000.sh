@@ -15,7 +15,7 @@
 set -x -e -u -o pipefail
 
 # EU_VIBE_DIR expected from euler-vibe wrapper
-export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm_gilded-gnosis-v20-vllmf5981f1-si2b9bf2a-fi801d57a-cu132-20260803-r24.sif
+export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm_gilded-gnosis-v20-vllm966d57c-sibbbdccc-fi801d57a-cu132-20260803-r27.sif
 export EU_VIBE_MODEL=deepseek-ai/DeepSeek-V4-Flash-0731
 echo EU_VIBE_DIR is $EU_VIBE_DIR
 echo EU_VIBE_SIF is $EU_VIBE_SIF
@@ -34,7 +34,6 @@ ARGS=(
     --containall
 
     # HF-offline setup from: https://dl.acm.org/doi/10.1145/3731599.3767356
-    --env OMP_NUM_THREADS=1
     --env HF_HUB_ENABLE_HF_TRANSFER=0
     --env HF_HUB_DISABLE_TELEMETRY=1
     --env VLLM_NO_USAGE_STATS=1
@@ -43,29 +42,24 @@ ARGS=(
     --env TRANSFORMERS_OFFLINE=1
     --env HF_HUB_OFFLINE=1
 
+    --env OMP_NUM_THREADS=$SLURM_JOB_CPUS_PER_NODE
+    --env TOKENIZERS_PARALLELISM=true
+
     # Set cache location
     --env VLLM_CACHE_ROOT=/cache
 
     # https://github.com/local-inference-lab/rtx6kpro/blob/master/models/ds4dspark-v20.md
-    --env CUDA_VISIBLE_DEVICES=0,1
-    --env PORT=$EU_VIBE_PORT
     --env MODE=dspark
-    --env BACKEND=b12x-a8
-    --env TP_SIZE=2
-    --env DCP_SIZE=1
-    --env DSPARK_DEPTH_MODE=fixed
     --env DSPARK_TOKENS=5
-    --env MAX_NUM_SEQS=2
-    #--env MAX_MODEL_LEN=524288
-    --env MAX_MODEL_LEN=1048576
-    --env MAX_NUM_BATCHED_TOKENS=2048
-    --env GPU_MEMORY_UTILIZATION=0.975
-    --env LOAD_FORMAT=instanttensor
-    --env INSTANTTENSOR_BACKEND=BUFFERED
-    --env KV_OFFLOADING_SIZE=0
-
-    # 
-    #--env KV_OFFLOADING_SIZE=192
+    #--env MAX_NUM_SEQS=1
+    #--env MAX_MODEL_LEN=1048576
+    #--env MAX_NUM_BATCHED_TOKENS=2048
+    --env MAX_NUM_SEQS=4
+    --env MAX_MODEL_LEN=262144
+    --env MAX_NUM_BATCHED_TOKENS=8192
+    --env PORT=$EU_VIBE_PORT
+    --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES
+    --env PYTHONHASHSEED=0
 
     # Specifically add an extra bind mount for /tmp as Apptainer default is too small
     --home $TMPDIR/home:/home
@@ -90,10 +84,8 @@ echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
     --exclude ".git/" \
     --progress --stats 1m \
-    --multi-thread-streams=$SLURM_CPUS_PER_TASK \
-    --transfers=$SLURM_CPUS_PER_TASK \
-    --checkers=$SLURM_CPUS_PER_TASK \
-    --multi-thread-streams=4 \
+    --transfers=4 \
+    --multi-thread-streams=8 \
     --multi-thread-cutoff=64M
 
 echo ${FROM} Starting vllm container
