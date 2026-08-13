@@ -8,6 +8,8 @@ set -euo pipefail
 # Used to infer locations of config/images/models
 export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
 export EU_VIBE_PORT=27182
+export EU_VIBE_LOCAL_PORT=27183
+export EU_VIBE_MODEL=deepseek-ai/DeepSeek-V4-Flash-0731
 
 usage() {
     cat <<EOF
@@ -28,6 +30,28 @@ Examples:
 EOF
 }
 
+cmd_claude() {
+    CLAUDE_IMAGE=$EU_VIBE_DIR/images/claude.sif
+    CLAUDE_HOME=$EU_VIBE_DIR/home/claude
+    mkdir -p "$CLAUDE_HOME"
+    chmod 700 "$CLAUDE_HOME"
+
+    OVERLAY_DIR=$(mktemp -d "$TMPDIR/euler-vibe-claude-overlay-dir.XXXXXXXX")
+
+    mkdir -p "$TMPDIR/_cmd_claude_overlay"
+    exec singularity exec \
+        --contain \
+        --cleanenv \
+        --nv \
+        --home "$CLAUDE_HOME:$HOME" \
+        --bind "$PWD:$PWD" \
+        --pwd "$PWD" \
+        --overlay "$OVERLAY_DIR" \
+        --env TERM="${TERM:-xterm-256color}" \
+        --env DISABLE_AUTOUPDATER=1 \
+        "$CLAUDE_IMAGE" claude --dangerously-skip-permissions "$@"
+}
+
 cmd_list() {
     cd $EU_VIBE_DIR/models
     du -h -d 2 . | awk -F"/" 'NF==3'
@@ -45,7 +69,7 @@ cmd_pull() {
 cmd_serve() {
     mkdir -p $EU_VIBE_DIR/logs
     export EULER_VIBE_LOGS="$EU_VIBE_DIR/logs/serve-%j.out"
-    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve/qwen3.6-27b_rtx_pro_6000.sbatch
+    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve/dsv4-flash_pro_6000.sbatch
 }
 
 cmd_serve_local() {
@@ -68,16 +92,16 @@ cmd_status() {
     EU_VIBE_SERVE_JOBID=$(squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk '$3 ~ /^euler-vibe/ {print $1}')
     export HEAD_NAME=$(scontrol show hostnames $(squeue -j $EU_VIBE_SERVE_JOBID -h -o "%N") | head -n 1)
     export BASE_URL="http://$HEAD_NAME:8000/v1/chat/completions"
-    export LOCAL_PORT=12346
+    export EU_VIBE_LOCAL_PORT=27183
     echo SSH tunnel:
-    echo ssh -N -L $LOCAL_PORT:$HEAD_NAME:8001 euler.ethz.ch
+    echo ssh -N -L $EU_VIBE_LOCAL_PORT:$HEAD_NAME:$EU_VIBE_PORT euler.ethz.ch
     echo 
     echo OpenAI API:
-    echo export OPENAI_API_BASE="http://localhost:$LOCAL_PORT/v1"
+    echo export OPENAI_API_BASE="http://localhost:$EU_VIBE_LOCAL_PORT/v1"
     echo export OPENAI_API_KEY=
     echo 
     echo Anthropic API:
-    echo export ANTHROPIC_BASE_URL="http://localhost:$LOCAL_PORT/"
+    echo export ANTHROPIC_BASE_URL="http://localhost:$EU_VIBE_LOCAL_PORT/"
     echo export ANTHROPIC_API_KEY=
     echo export ANTHROPIC_AUTH_TOKEN=
     echo export ANTHROPIC_DEFAULT_OPUS_MODEL=$EU_VIBE_MODEL
@@ -95,6 +119,24 @@ cmd_status() {
     
 }
 
+cmd_activate() {
+    EU_VIBE_SERVE_JOBID=$(squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk '$3 ~ /^euler-vibe/ {print $1}')
+    export HEAD_NAME=$(scontrol show hostnames $(squeue -j $EU_VIBE_SERVE_JOBID -h -o "%N") | head -n 1)
+    echo export OPENAI_API_BASE="http://localhost:$EU_VIBE_LOCAL_PORT/v1"
+    echo export OPENAI_API_KEY=
+    echo export ANTHROPIC_BASE_URL="http://localhost:$EU_VIBE_LOCAL_PORT/"
+    echo export ANTHROPIC_API_KEY=
+    echo export ANTHROPIC_AUTH_TOKEN=
+    echo export ANTHROPIC_DEFAULT_OPUS_MODEL=$EU_VIBE_MODEL
+    echo export ANTHROPIC_DEFAULT_SONNET_MODEL=$EU_VIBE_MODEL
+    echo export ANTHROPIC_DEFAULT_HAIKU_MODEL=$EU_VIBE_MODEL
+    echo pgrep -f \"ssh -f -N -L $EU_VIBE_LOCAL_PORT:$HEAD_NAME:$EU_VIBE_PORT\" '>' /dev/null '||' ssh -f -N -L $EU_VIBE_LOCAL_PORT:$HEAD_NAME:$EU_VIBE_PORT euler.ethz.ch
+}
+
+cmd_deactivate() {
+    echo pkill -f \"ssh -f -N -L $EU_VIBE_LOCAL_PORT\"
+}
+
 main() {
     local cmd="${1:-}"
 
@@ -103,6 +145,15 @@ main() {
     fi
 
     case "$cmd" in
+        claude)
+            cmd_claude "$@"
+            ;;
+        activate)
+            cmd_activate "$@"
+            ;;
+        deactivate)
+            cmd_deactivate "$@"
+            ;;
         list)
             cmd_list "$@"
             ;;

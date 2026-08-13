@@ -2,7 +2,7 @@
 #SBATCH --job-name=euler-vibe-serve
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=48
-#SBATCH --mem-per-cpu=8G
+#SBATCH --mem-per-cpu=2G
 #SBATCH --gpus=pro_6000:2
 #SBATCH --time=0-04:00:00
 #SBATCH --tmp=512G
