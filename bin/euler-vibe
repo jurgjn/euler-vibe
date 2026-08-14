@@ -31,8 +31,8 @@ EOF
 }
 
 cmd_claude() {
-    CLAUDE_IMAGE=$EU_VIBE_DIR/images/claude.sif
-    CLAUDE_HOME=$EU_VIBE_DIR/home/claude
+    CLAUDE_IMAGE=$EU_VIBE_DIR/images/claude-eu.sif
+    CLAUDE_HOME=$EU_VIBE_DIR/home/claude-eu
     mkdir -p "$CLAUDE_HOME"
     chmod 700 "$CLAUDE_HOME"
 
