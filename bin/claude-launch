@@ -14,6 +14,7 @@ CLAUDE_LAUNCH_DIR=$(dirname "$(dirname "$CLAUDE_LAUNCH_BIN")")
 CLAUDE_MOBILE=$CLAUDE_LAUNCH_DIR/bin/claude-mobile
 CLAUDE_MOBILE_HOME=${CLAUDE_MOBILE_HOME:-$CLAUDE_LAUNCH_DIR/home/claude-mobile}
 CLAUDE_MOBILE_IMAGE=${CLAUDE_MOBILE_IMAGE:-$CLAUDE_LAUNCH_DIR/images/claude-mobile.sif}
+CLAUDE_LAUNCH_CONFIG_DIR=${CLAUDE_LAUNCH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/claude-launch/configs}
 
 WORKSPACE=$(pwd)
 MODE=claude            # claude | happy | shell
@@ -36,6 +37,33 @@ cls()       { printf '\033[2J\033[3J\033[H'; }  # full clear incl. scrollback
 show_cursor() { [ -t 1 ] && printf '\033[?25h' || true; }
 hide_cursor() { [ -t 1 ] && printf '\033[?25l' || true; }
 trap 'show_cursor; printf "\n"' EXIT INT TERM
+# A resize invalidates the in-place redraw, so force one full clear after it.
+NEED_CLS=0
+trap 'NEED_CLS=1' WINCH
+
+term_rows() {
+    local r
+    r=$(tput lines 2>/dev/null) || r=""
+    [ -n "$r" ] && [ "$r" -gt 0 ] 2>/dev/null || r=24
+    printf '%s' "$r"
+}
+
+# How many lines render_header will emit, so menu_select can budget the rest.
+header_lines() {
+    local rw=${#RW_BINDS[@]} ro=${#RO_BINDS[@]} cap=${HEADER_BIND_CAP:-0}
+    # A capped list shows cap entries plus one "… N more" line.
+    if [ "$cap" -gt 0 ]; then
+        [ "$rw" -gt "$cap" ] && rw=$((cap + 1))
+        [ "$ro" -gt "$cap" ] && ro=$((cap + 1))
+    fi
+    [ "$rw" -gt 0 ] || rw=1
+    [ "$ro" -gt 0 ] || ro=1
+    if [ "${HEADER_COMPACT:-0}" -eq 1 ]; then
+        printf '%s' $((6 + rw + ro))
+    else
+        printf '%s' $((15 + rw + ro))
+    fi
+}
 
 # --- helpers ---------------------------------------------------------------
 
@@ -95,18 +123,58 @@ menu_select() {
     fi
 
     hide_cursor
-    local key rest i
+    local key rest i rows avail h vis start cap
     while true; do
+        # Fit the frame to the window: try the full header, fall back to the
+        # compact one, and finally scroll the option list. Without this the
+        # frame outgrows the terminal, the terminal scrolls, and the in-place
+        # redraw (\033[H) lands mid-frame leaving stale rows on screen.
+        rows=$(term_rows)
+        avail=$((rows - 1))
+        HEADER_COMPACT=0
+        HEADER_BIND_CAP=0
+        h=$(header_lines)
+        if [ $((h + 3 + n)) -gt "$avail" ]; then
+            HEADER_COMPACT=1
+            h=$(header_lines)
+        fi
+        # Header still crowding out the options? Trim the bind lists so at
+        # least three option rows survive.
+        if [ $((h + 6)) -gt "$avail" ]; then
+            for cap in 8 6 4 3 2 1; do
+                HEADER_BIND_CAP=$cap
+                h=$(header_lines)
+                [ $((h + 6)) -le "$avail" ] && break
+            done
+        fi
+        vis=$((avail - h - 3))
+        [ "$vis" -lt "$n" ] && vis=$((vis - 2))   # leave room for the ↑/↓ markers
+        [ "$vis" -lt 3 ] && vis=3
+        [ "$vis" -gt "$n" ] && vis=$n
+        start=0
+        if [ "$vis" -lt "$n" ]; then
+            start=$((sel - vis / 2))
+            [ "$start" -lt 0 ] && start=0
+            [ "$start" -gt $((n - vis)) ] && start=$((n - vis))
+        fi
+
+        # If even the trimmed frame cannot fit (very short window), clear fully
+        # instead of redrawing in place: the frame then scrolls to its bottom
+        # rather than leaving stale rows from the previous frame behind.
+        if [ $((h + 3 + vis + 2)) -gt "$avail" ]; then NEED_CLS=1; fi
+        if [ "${NEED_CLS:-0}" -eq 1 ]; then cls; NEED_CLS=0; fi
         render_header
         printf '  %s%s%s%s\n' "$DIM" "$prompt" "$RST" "$EL"
         printf '  %s↑/↓ move · enter select · q quit%s%s\n\n' "$GREY" "$RST" "$EL"
-        for i in "${!options[@]}"; do
+        [ "$start" -gt 0 ] && printf '   %s↑ %d more%s%s\n' "$GREY" "$start" "$RST" "$EL"
+        for (( i = start; i < start + vis; i++ )); do
             if [ "$i" -eq "$sel" ]; then
                 printf '   %s●%s %s%s%s%s\n' "$GREEN" "$RST" "$BOLD" "${options[$i]}" "$RST" "$EL"
             else
                 printf '   %s·%s %s%s%s%s\n' "$GREY" "$RST" "$DIM" "${options[$i]}" "$RST" "$EL"
             fi
         done
+        [ $((start + vis)) -lt "$n" ] && printf '   %s↓ %d more%s%s\n' "$GREY" $((n - start - vis)) "$RST" "$EL"
         clr_down
         IFS= read -rsn1 key || true
         case "$key" in
@@ -126,8 +194,43 @@ menu_select() {
 
 # --- screens ---------------------------------------------------------------
 
+# Same information, minus the box, the blank spacers and the ↳ hints. Used
+# automatically when the full header plus the menu would not fit on screen.
+# Print a bind list, trimmed to HEADER_BIND_CAP entries when space is tight.
+print_binds() {
+    local color=$1; shift
+    local arr=("$@")
+    local cap=${HEADER_BIND_CAP:-0} total=${#arr[@]} shown i
+    if [ "$total" -eq 0 ]; then
+        printf '    %s(none)%s%s\n' "$DIM" "$RST" "$EL"
+        return 0
+    fi
+    shown=$total
+    [ "$cap" -gt 0 ] && [ "$shown" -gt "$cap" ] && shown=$cap
+    for (( i = 0; i < shown; i++ )); do
+        printf '    %s●%s %s%s\n' "$color" "$RST" "${arr[$i]}" "$EL"
+    done
+    if [ "$shown" -lt "$total" ]; then
+        printf '    %s… %d more%s%s\n' "$GREY" $((total - shown)) "$RST" "$EL"
+    fi
+    return 0
+}
+
+render_header_compact() {
+    printf '  %s● claude-launch%s  %s·%s  %s%s%s%s\n' \
+        "$BOLD$GREEN" "$RST" "$DIM" "$RST" "$GREEN" "$MODE" "$RST" "$EL"
+    printf '  %sWorkspace%s %s%s%s%s\n' "$BOLD" "$RST" "$YELLOW" "$WORKSPACE" "$RST" "$EL"
+    printf '  %sHome%s      %s%s%s%s\n' "$BOLD" "$RST" "$CYAN" "$CLAUDE_MOBILE_HOME" "$RST" "$EL"
+    printf '  %sRead-write dirs%s%s\n' "$BOLD" "$RST" "$EL"
+    print_binds "$GREEN" "${RW_BINDS[@]}"
+    printf '  %sRead-only dirs%s%s\n' "$BOLD" "$RST" "$EL"
+    print_binds "$BLUE" "${RO_BINDS[@]}"
+    printf '%s\n' "$EL"
+}
+
 render_header() {
     home
+    if [ "${HEADER_COMPACT:-0}" -eq 1 ]; then render_header_compact; return; fi
     printf '  %s╭────────────────────────────────────────────────────────╮%s%s\n' "$CYAN" "$RST" "$EL"
     printf '  %s│%s  %s● claude-launch%s   %sstart a sandboxed Claude Code agent%s  %s│%s%s\n' \
         "$CYAN" "$RST" "$BOLD$GREEN" "$RST" "$DIM" "$RST" "$CYAN" "$RST" "$EL"
@@ -221,6 +324,139 @@ launch() {
     exec "$CLAUDE_MOBILE" "${args[@]}"
 }
 
+# --- saved configurations --------------------------------------------------
+# A config captures the whole launch setup (workspace, home, mode, binds) as a
+# small file of `printf %q`-quoted assignments under CLAUDE_LAUNCH_CONFIG_DIR,
+# so a setup you use often can be recalled instead of retyped.
+
+config_path() { printf '%s/%s.conf' "$CLAUDE_LAUNCH_CONFIG_DIR" "$1"; }
+
+# Shorten $HOME to ~ for display only.
+tilde() {
+    local p=$1
+    case "$p" in
+        "$HOME") printf '~' ;;
+        "$HOME"/*) printf '~/%s' "${p#"$HOME"/}" ;;
+        *) printf '%s' "$p" ;;
+    esac
+}
+
+# Populate CONFIG_NAMES with the saved config names (glob order = sorted).
+list_configs() {
+    CONFIG_NAMES=()
+    local f b
+    [ -d "$CLAUDE_LAUNCH_CONFIG_DIR" ] || return 0
+    for f in "$CLAUDE_LAUNCH_CONFIG_DIR"/*.conf; do
+        [ -e "$f" ] || continue
+        b=${f##*/}
+        CONFIG_NAMES+=("${b%.conf}")
+    done
+}
+
+# Read just the workspace out of a config, for the menu label. Sourced in a
+# subshell so a broken file can't disturb the current state.
+config_workspace() {
+    ( set +eu; . "$1" >/dev/null 2>&1; printf '%s' "${WORKSPACE:-?}" )
+}
+
+# Only the keys we write are allowed, so a config file stays data rather than
+# arbitrary code that sourcing would execute.
+config_is_valid() {
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            ''|'#'*) ;;
+            WORKSPACE=*|MODE=*|CLAUDE_MOBILE_HOME=*|'RW_BINDS=('*|'RO_BINDS=('*) ;;
+            *) return 1 ;;
+        esac
+    done < "$1"
+    return 0
+}
+
+save_config_file() {
+    local name=$1 f b
+    f=$(config_path "$name")
+    mkdir -p "$CLAUDE_LAUNCH_CONFIG_DIR"
+    {
+        printf '# claude-launch config: %s\n' "$name"
+        printf '# saved %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+        printf 'WORKSPACE=%q\n' "$WORKSPACE"
+        printf 'MODE=%q\n' "$MODE"
+        printf 'CLAUDE_MOBILE_HOME=%q\n' "$CLAUDE_MOBILE_HOME"
+        printf 'RW_BINDS=('; for b in "${RW_BINDS[@]}"; do printf ' %q' "$b"; done; printf ' )\n'
+        printf 'RO_BINDS=('; for b in "${RO_BINDS[@]}"; do printf ' %q' "$b"; done; printf ' )\n'
+    } > "$f"
+}
+
+prompt_config_name() {
+    local reply
+    show_cursor
+    read -e -r -p "$(printf '%sConfig name%s (letters, digits, . _ - ; empty to cancel): ' "$BOLD" "$RST")" reply || return 1
+    [ -n "$reply" ] || return 1
+    if ! [[ "$reply" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+        printf '%s  ! Invalid name: %s%s\n' "$RED" "$reply" "$RST" >&2
+        sleep 1
+        return 1
+    fi
+    printf '%s\n' "$reply"
+}
+
+save_config() {
+    render_header
+    local name
+    name=$(prompt_config_name) || return
+    if [ -e "$(config_path "$name")" ]; then
+        MENU_DEFAULT=1
+        menu_select "Config '$name' already exists — overwrite it?" \
+            "Overwrite '$name'" \
+            "Cancel (keep the existing config)"
+        [ "${MENU_CHOICE}" -eq 0 ] || return
+    fi
+    save_config_file "$name"
+    render_header
+    printf '  %s✓ Saved config %s%s%s%s\n' "$GREEN" "$BOLD" "$name" "$RST" "$EL"
+    printf '  %s%s%s%s\n' "$DIM" "$(config_path "$name")" "$RST" "$EL"
+    clr_down
+    pause
+}
+
+reuse_config() {
+    list_configs
+    if [ ${#CONFIG_NAMES[@]} -eq 0 ]; then
+        render_header
+        printf '  %sNo saved configs yet — use "Save current config" first.%s%s\n' "$DIM" "$RST" "$EL"
+        printf '  %sConfig dir: %s%s%s\n' "$DIM" "$CLAUDE_LAUNCH_CONFIG_DIR" "$RST" "$EL"
+        clr_down
+        pause
+        return
+    fi
+    local labels=() n
+    for n in "${CONFIG_NAMES[@]}"; do
+        labels+=("$n ($(tilde "$(config_workspace "$(config_path "$n")")"))")
+    done
+    labels+=("(cancel)")
+    menu_select "Pick a config to load:" "${labels[@]}"
+    [ "${MENU_CHOICE}" -ge 0 ] 2>/dev/null || return
+    [ "${MENU_CHOICE}" -lt "${#CONFIG_NAMES[@]}" ] || return
+    local name=${CONFIG_NAMES[$MENU_CHOICE]} f
+    f=$(config_path "$name")
+    if ! config_is_valid "$f"; then
+        render_header
+        printf '%s  ! %s has unexpected content and was not loaded.%s%s\n' "$RED" "$f" "$RST" "$EL"
+        clr_down
+        pause
+        return
+    fi
+    # Reset first so a config that omits a key doesn't inherit the current one.
+    RW_BINDS=(); RO_BINDS=()
+    . "$f"
+    case "$MODE" in claude|happy|shell) ;; *) MODE=claude ;; esac
+    render_header
+    printf '  %s✓ Loaded config %s%s%s — press Launch when ready%s\n' "$GREEN" "$BOLD" "$name" "$RST" "$EL"
+    clr_down
+    pause
+}
+
 # --- main loop -------------------------------------------------------------
 
 if [ ! -x "$CLAUDE_MOBILE" ]; then
@@ -237,6 +473,8 @@ while true; do
         "Change home directory (persistent auth/session state)" \
         "Remove an extra bind" \
         "Change mode (claude / happy / shell)" \
+        "Reuse a saved config" \
+        "Save current config" \
         "Review launch command" \
         "Launch ▶" \
         "Quit"
@@ -247,9 +485,11 @@ while true; do
         3) if hd=$(prompt_dir "Home directory" allow-missing); then CLAUDE_MOBILE_HOME=$hd; fi ;;
         4) remove_bind ;;
         5) change_mode ;;
-        6) review_command ;;
-        7) launch ;;
-        8|-2) cls; printf '%s  Bye.%s\n' "$DIM" "$RST"; exit 0 ;;
+        6) reuse_config ;;
+        7) save_config ;;
+        8) review_command ;;
+        9) launch ;;
+        10|-2) cls; printf '%s  Bye.%s\n' "$DIM" "$RST"; exit 0 ;;
         *) : ;;
     esac
 done

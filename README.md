@@ -27,6 +27,8 @@ Happy's Quick Start guide was last updated on March 23, 2026 and still shows `np
 
 For an interactive setup, run `claude-launch`: an arrow-key menu that lets you pick the workspace, the home directory (persistent auth/session state), add read-only / read-write directories (with Tab completion) the agent may access, review the sandbox, and launch it. It just assembles the flags below and calls `claude-mobile`. Changing the home directory sets `CLAUDE_MOBILE_HOME` for the launched session, so you can keep isolated homes (separate logins, history, and Claude installs) per project or experiment.
 
+Setups you use often can be saved instead of retyped. **Save current config** stores the whole sandbox (workspace, home, mode, and every read-only / read-write bind) under a name you choose; **Reuse a saved config** lists them as `name (workspace)` and repopulates every field, so you can go straight to Launch. Saving over an existing name asks first, and defaults to keeping what is already there. Configs live in `${XDG_CONFIG_HOME:-~/.config}/claude-launch/configs` — a central directory, independent of the workspace — and can be moved to a shared location with `CLAUDE_LAUNCH_CONFIG_DIR`.
+
 To run directly:
 ```
 claude-mobile
