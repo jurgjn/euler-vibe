@@ -1,5 +1,5 @@
 # euler-vibe
-An attempt at sandboxing codex on euler with singularity, see [speedrun.ipynb](speedrun.ipynb) for setup and example usage.
+An attempt at sandboxing codex on euler with singularity, see [speedrun.ipynb](speedrun.ipynb) for setup and example usage. No guarantees, use at your own risk!
 - All codex sandboxing is disabled, should be able to run for longer periods as an agent
 - `codex-eu` script runs Codex in a singularity container with the following mount points:
     - Current working directory
