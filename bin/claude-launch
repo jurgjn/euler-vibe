@@ -310,7 +310,30 @@ change_mode() {
     esac
 }
 
+# Shown when the container image is missing: a clone gets images/*.def but the
+# built .sif is gitignored, so the image has to be built once before launching.
+image_missing_note() {
+    printf '  %s! Container image not found%s%s\n' "$RED$BOLD" "$RST" "$EL"
+    printf '    %s%s%s%s\n' "$DIM" "$CLAUDE_MOBILE_IMAGE" "$RST" "$EL"
+    printf '%s\n' "$EL"
+    printf '  A clone ships the build recipe, not the image. Build it once:%s\n' "$EL"
+    printf '    %scd %s && ./setup.sh%s%s\n' "$CYAN" "$CLAUDE_LAUNCH_DIR" "$RST" "$EL"
+    printf '  %sor directly, from the repository root:%s%s\n' "$DIM" "$RST" "$EL"
+    printf '    %ssingularity build images/claude-mobile.sif images/claude-mobile.def%s%s\n' "$CYAN" "$RST" "$EL"
+    printf '%s\n' "$EL"
+    printf '  %sIf mksquashfs runs out of memory, add:%s%s\n' "$DIM" "$RST" "$EL"
+    printf '    %s--mksquashfs-args "-processors 4 -mem 2048M"%s%s\n' "$DIM" "$RST" "$EL"
+    printf '  %sSet CLAUDE_MOBILE_IMAGE to point at an image kept elsewhere.%s%s\n' "$DIM" "$RST" "$EL"
+}
+
 launch() {
+    if [ ! -e "$CLAUDE_MOBILE_IMAGE" ]; then
+        render_header
+        image_missing_note
+        clr_down
+        pause
+        return
+    fi
     local args=()
     while IFS= read -r a; do args+=("$a"); done < <(build_cmd_args)
     render_header
@@ -465,6 +488,12 @@ if [ ! -x "$CLAUDE_MOBILE" ]; then
 fi
 
 cls
+if [ ! -e "$CLAUDE_MOBILE_IMAGE" ]; then
+    printf '\n'
+    image_missing_note
+    pause
+    cls
+fi
 while true; do
     menu_select "Main menu:" \
         "Add read-write directory" \

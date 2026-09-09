@@ -1,6 +1,6 @@
 # euler-vibe
 
-An attempt at sandboxing codex on euler with singularity, see [speedrun.ipynb](speedrun.ipynb) for setup and example usage.
+An attempt at sandboxing codex on euler with singularity, see [speedrun-codex.ipynb](speedrun-codex.ipynb) for setup and example usage.
 - All codex sandboxing is disabled, should be able to run for longer periods as an agent
 - `codex-eu` script runs Codex in a singularity container with the following mount points:
     - Current working directory
@@ -22,6 +22,27 @@ codex-mobile
 `codex-mobile` also accepts repeated `--extra-bind SRC[:DEST]` and `--extra-read-bind SRC[:DEST]` wrapper flags before the subcommand so additional paths can be mounted read-write or read-only inside the container.
 
 Happy's Quick Start guide was last updated on March 23, 2026 and still shows `npm install -g happy-coder`, but the current upstream Happy README now says the package moved to `happy`. This image builds Happy CLI `1.1.7` from the public `slopus/happy` source and applies a small local patch so `codex-mobile` can use a proxy-aware websocket agent on proxy-restricted clusters instead of assuming direct websocket connectivity.
+
+## First run
+
+A clone ships the container build recipes (`images/*.def`) but not the built images — a `.sif` is ~680 MB and is gitignored. Build one before anything can launch:
+
+```
+git clone https://github.com/jurgjn/euler-vibe.git
+cd euler-vibe
+module load eth_proxy          # the build pulls base layers from ghcr.io / docker.io
+./setup.sh
+```
+
+`setup.sh` builds `images/claude-mobile.sif` and offers to add `bin/` to your `~/.bashrc`, so `claude-launch` works from any directory (the workspace defaults to wherever you invoke it). It is safe to re-run: an existing image is kept unless `--force`, and the PATH block is written once. Useful flags: `--no-build`, `--no-path`, `--low-mem` (if `mksquashfs` gets OOM-killed), `--rc FILE`, `-y`.
+
+Without `setup.sh`, build by hand from the repository root — the recipe copies `images/patch-happy-force-polling.mjs` by relative path, so the working directory matters:
+
+```
+singularity build images/claude-mobile.sif images/claude-mobile.def
+```
+
+`claude-launch` checks for the image on startup and tells you how to build it if it is missing, rather than failing inside the container.
 
 ## Claude Code:
 
