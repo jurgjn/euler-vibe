@@ -77,14 +77,16 @@ ARGS=(
     --override-generation-config.presence_penalty 0.0
     --override-generation-config.repetition_penalty 1.0
 
-    --max-model-len 262144
-    --override-generation-config.max_tokens 131072
+    #--max-model-len 262144
+    #--max-model-len 131072
+    --max-model-len 65536
+    #--override-generation-config.max_tokens 131072
 
     #--gpu-memory-utilization 0.92
     # Give the KV cache an explicit, smaller budget
     #--kv-cache-memory 12884901888
 
-    #--max-num-seqs 32
+    --max-num-seqs 32
     #--max-num-batched-tokens 8192
 
     # Prefix caching is clearly paying off (hit rates climbing to 85%+)

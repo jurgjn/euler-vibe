@@ -53,6 +53,24 @@ cmd_claude() {
         "$CLAUDE_IMAGE" claude --dangerously-skip-permissions "$@"
 }
 
+cmd_pi() {
+    OVERLAY_DIR="$TMPDIR/euler-vibe.$$"
+    mkdir -p "$OVERLAY_DIR"/home "$OVERLAY_DIR"/overlay "$OVERLAY_DIR"/tmp
+    exec singularity run \
+        --nv \
+        --cleanenv \
+        --containall \
+        --env EU_VIBE_PORT=27182 \
+        --env EU_VIBE_MODEL=Qwen/Qwen3.8-27B-FP8 \
+        --cwd "$PWD" \
+        --home "$OVERLAY_DIR"/home \
+        --overlay "$OVERLAY_DIR"/overlay \
+        --bind "$OVERLAY_DIR"/tmp:/tmp \
+        --bind "$PWD:$PWD" \
+        $EU_VIBE_DIR/images/pi-eu.sif \
+        "$@"
+}
+
 cmd_list() {
     cd $EU_VIBE_DIR/models
     du -h -d 2 . | awk -F"/" 'NF==3'
@@ -74,10 +92,7 @@ cmd_serve() {
 }
 
 cmd_serve_local() {
-    $EU_VIBE_DIR/serve/dsv4-flash_pro_6000.sh
-    #mkdir -p $EU_VIBE_DIR/logs
-    #export EULER_VIBE_LOGS="$EU_VIBE_DIR/logs/serve-%j.out"
-    #sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve/qwen3.6-27b_rtx_pro_6000.sbatch
+    exec $EU_VIBE_DIR/serve/Qwen3.8-27B_rtx_4090.sh
 }
 
 cmd_scancel() {
@@ -148,6 +163,9 @@ main() {
     case "$cmd" in
         claude)
             cmd_claude "$@"
+            ;;
+        pi)
+            cmd_pi "$@"
             ;;
         activate)
             cmd_activate "$@"

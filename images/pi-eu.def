@@ -35,8 +35,8 @@ From: vllm/vllm-openai:latest-cu130
     # apt-get cleanup
     rm -rf /var/lib/apt/lists/* && apt-get clean
 
-    # https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent#quick-start
-    npm install -g @mariozechner/pi-coding-agent
+    # https://github.com/earendil-works/pi/tree/main/packages/coding-agent#quick-start
+    npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
     #export UV_LINK_MODE=copy
     #uv pip install portpicker --system
@@ -69,9 +69,9 @@ From: vllm/vllm-openai:latest-cu130
 {
     "providers": {
         "vllm-local": {
-            "baseUrl": "http://localhost:8000/v1",
+            "baseUrl": "http://localhost:$EU_VIBE_PORT/v1",
             "api": "openai-completions",
-            "apiKey": "todo_generate_me",
+            "apiKey": "local",
             "models": [
                 { "id": "$EU_VIBE_MODEL" }
             ]
@@ -80,29 +80,11 @@ From: vllm/vllm-openai:latest-cu130
 }
 EOF
 
-    # Download model if necessary
-    echo Downloading $EU_VIBE_MODEL
-    hf download $EU_VIBE_MODEL
-
-    # Start vllm serve with arguments defined in the wrapper script
-    EU_VIBE_VLLM_LOGS=/home/vllm_serve_logs_`date +"%y-%m-%d_%H%M%S"`.txt
-    echo Starting vllm serve:
-    echo logs: $EU_VIBE_VLLM_LOGS
-    echo args: $EU_VIBE_VLLM_ARGS
-    vllm serve $EU_VIBE_MODEL $EU_VIBE_VLLM_ARGS > $EU_VIBE_VLLM_LOGS 2>&1 &
-
-    echo Waiting for vllm startup to finish
-    sleep 120
-
-	EU_VIBE_VLLM_PID=$!
-    echo Setting up kill trap for vllm serve with pid $EU_VIBE_VLLM_PID
-    trap 'kill -TERM $EU_VIBE_VLLM_PID || true' EXIT TERM INT HUP
-
-    #echo Starting shell
-    #exec /bin/bash
-
     echo Running pi with: "$@"
     pi "$@"
+
+%labels
+    BuildCommand apptainer build pi-eu.sif pi-eu.def
 
 %help
     Run sandboxed ollama/pi on euler with the following features/fixes/kludges:
@@ -124,5 +106,3 @@ EOF
         nvidia-smi --query-compute-apps=pid,process_name,used_memory
         kill ..
         ```
-
-
