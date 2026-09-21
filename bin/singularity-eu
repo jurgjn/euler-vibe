@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#
+# singularity-eu - run `singularity` in a clean environment using euler-tailored throwaway mounts
+#
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $(basename "$0") <singularity-subcommand> [args...]" >&2
+    echo "  e.g.: $(basename "$0") exec my_container.sif echo hello" >&2
+    exit 1
+fi
+
+tmpdir="${TMPDIR:-/tmp}"
+overlay_dir="${tmpdir%/}/singularity_overlay.$$"
+
+mkdir -p "$overlay_dir"/home "$overlay_dir"/overlay "$overlay_dir"/tmp
+
+cleanup() {
+    rm -rf "$overlay_dir"
+}
+trap cleanup EXIT
+
+# First argument is the singularity subcommand (exec/run/shell/...);
+# --overlay must come after it and before the container/command.
+subcmd="$1"
+shift
+
+exec singularity "$subcmd" \
+    --cleanenv \
+    --containall \
+    --home "$overlay_dir"/home \
+    --overlay "$overlay_dir"/overlay \
+    --bind "$overlay_dir"/tmp:/tmp \
+    --bind "$PWD:$PWD" \
+    --cwd "$PWD" \
+    "$@"
