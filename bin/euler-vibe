@@ -36,17 +36,18 @@ cmd_claude() {
     mkdir -p "$CLAUDE_HOME"
     chmod 700 "$CLAUDE_HOME"
 
-    OVERLAY_DIR=$(mktemp -d "$TMPDIR/euler-vibe-claude-overlay-dir.XXXXXXXX")
+    OVERLAY_DIR="$TMPDIR/euler-vibe-claude_overlay.$$"
+    mkdir -p "$OVERLAY_DIR"/overlay "$OVERLAY_DIR"/tmp
 
-    mkdir -p "$TMPDIR/_cmd_claude_overlay"
     exec singularity exec \
         --contain \
         --cleanenv \
         --nv \
         --home "$CLAUDE_HOME:$HOME" \
+        --overlay "$OVERLAY_DIR"/overlay \
+        --bind "$OVERLAY_DIR"/tmp:/tmp \
         --bind "$PWD:$PWD" \
-        --pwd "$PWD" \
-        --overlay "$OVERLAY_DIR" \
+        --cwd "$PWD" \
         --env TERM="${TERM:-xterm-256color}" \
         --env DISABLE_AUTOUPDATER=1 \
         "$CLAUDE_IMAGE" claude --dangerously-skip-permissions "$@"
