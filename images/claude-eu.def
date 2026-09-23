@@ -33,6 +33,9 @@ From: nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
     # Install Claude Code globally via npm
     npm install -g @anthropic-ai/claude-code
 
+    # https://github.com/uditakhourii/adhd
+    #npx -y skills add UditAkhourii/adhd --agent claude-code -y
+
     # Trim the npm cache to keep the image small
     npm cache clean --force
 

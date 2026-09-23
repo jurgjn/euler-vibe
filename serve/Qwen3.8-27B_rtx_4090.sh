@@ -86,7 +86,7 @@ ARGS=(
     # Give the KV cache an explicit, smaller budget
     #--kv-cache-memory 12884901888
 
-    --max-num-seqs 32
+    --max-num-seqs 4
     #--max-num-batched-tokens 8192
 
     # Prefix caching is clearly paying off (hit rates climbing to 85%+)

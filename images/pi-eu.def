@@ -1,6 +1,6 @@
 
 Bootstrap: docker
-From: ghcr.io/astral-sh/uv:0.10.12
+From: ghcr.io/astral-sh/uv:0.12.17
 Stage: uv_stage
 
 Bootstrap: docker
@@ -19,11 +19,14 @@ From: vllm/vllm-openai:latest-cu130
         build-essential \
         ca-certificates \
         curl \
+        fd-find \
         git \
         less \
         python-is-python3 \
         python3.13 \
         python3.13-dev \
+        ripgrep \
+        squashfs-tools \
         zstd
 
     # nodejs v24 is LTS: https://nodejs.org/en/about/previous-releases 
@@ -32,59 +35,41 @@ From: vllm/vllm-openai:latest-cu130
     apt-get update && apt-get install -y --no-install-recommends \
         nodejs
 
+    # pi auto-downloads rg/fd at startup unless found on PATH;
+    # apt's fd-find only installs `fdfind`, so symlink it
+    ln -sf /usr/bin/fdfind /usr/local/bin/fd
+
     # apt-get cleanup
     rm -rf /var/lib/apt/lists/* && apt-get clean
 
     # https://github.com/earendil-works/pi/tree/main/packages/coding-agent#quick-start
     npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
-    #export UV_LINK_MODE=copy
-    #uv pip install portpicker --system
-    #uv pip install -U vllm --torch-backend auto --system
+    # Bake pi's config dir into the image, independent of $HOME at runtime
+    export PI_CODING_AGENT_DIR=/opt/pi-agent
+    mkdir -p $PI_CODING_AGENT_DIR
+    pi install git:github.com/jurgjn/pi-llama
 
 %test
+    rg --version | head -1
+    fd --version
     uv --version
     node -v
     npm -v
     pi --version
 
-#%environment
-#    export UV_LINK_MODE=copy
-#
-#    # https://stackoverflow.com/questions/10081293/install-npm-into-home-directory-with-distribution-nodejs-package-ubuntu
-#    # set up a package root in `/home` to hold the Node "global" packages:
-#    export NPM_PACKAGES="$HOME/.npm-packages"
-#    export PATH="$NPM_PACKAGES/bin:$PATH"
-#    mkdir -p "$NPM_PACKAGES"
-#    echo 'prefix=${NPM_PACKAGES}' >> ~/.npmrc
-#    export NODE_PATH="$NPM_PACKAGES/lib/node_modules:$NODE_PATH"
-
 %runscript
-    #set -euo pipefail
-    echo Starting runscript
-
-    # Write config to serve $EU_VIBE_MODEL
-    mkdir -p $HOME/.pi/agent
-    cat << EOF > $HOME/.pi/agent/models.json
-{
-    "providers": {
-        "vllm-local": {
-            "baseUrl": "http://localhost:$EU_VIBE_PORT/v1",
-            "api": "openai-completions",
-            "apiKey": "local",
-            "models": [
-                { "id": "$EU_VIBE_MODEL" }
-            ]
-        }
-    }
-}
-EOF
-
-    echo Running pi with: "$@"
-    pi "$@"
+    set -eu
+    export PI_CODING_AGENT_DIR=/opt/pi-agent
+    export LLAMA_BASE_URL=$EU_VIBE_URL/v1
+    export LLAMA_API_KEY=$EU_API_KEY
+    echo LLAMA_API_KEY is $LLAMA_API_KEY
+    curl -s $EU_VIBE_URL/health
+    curl -s $EU_VIBE_URL/v1/models
+    exec pi "$@"
 
 %labels
-    BuildCommand apptainer build pi-eu.sif pi-eu.def
+    BuildCommand apptainer build --force pi-eu.sif pi-eu.def
 
 %help
     Run sandboxed ollama/pi on euler with the following features/fixes/kludges:

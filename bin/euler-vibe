@@ -10,6 +10,7 @@ export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
 export EU_VIBE_PORT=27182
 export EU_VIBE_LOCAL_PORT=27183
 export EU_VIBE_MODEL=deepseek-ai/DeepSeek-V4-Flash-0731
+export EU_API_KEY="no-api"
 
 usage() {
     cat <<EOF
@@ -60,8 +61,9 @@ cmd_pi() {
         --nv \
         --cleanenv \
         --containall \
-        --env EU_VIBE_PORT=27182 \
-        --env EU_VIBE_MODEL=Qwen/Qwen3.8-27B-FP8 \
+        --env EU_VIBE_URL="http://localhost:$EU_VIBE_PORT" \
+        --env EU_API_KEY="no-key" \
+        --env EU_VIBE_MODEL="Qwen3.8-27B-UD-Q6_K_XL" \
         --cwd "$PWD" \
         --home "$OVERLAY_DIR"/home \
         --overlay "$OVERLAY_DIR"/overlay \
@@ -92,7 +94,7 @@ cmd_serve() {
 }
 
 cmd_serve_local() {
-    exec $EU_VIBE_DIR/serve/Qwen3.8-27B_rtx_4090.sh
+    exec $EU_VIBE_DIR/serve/Qwen3.8-27B_rtx_4090_llama.sh
 }
 
 cmd_scancel() {
