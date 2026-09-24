@@ -46,9 +46,9 @@ From: vllm/vllm-openai:latest-cu130
     npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
     # Bake pi's config dir into the image, independent of $HOME at runtime
-    export PI_CODING_AGENT_DIR=/opt/pi-agent
-    mkdir -p $PI_CODING_AGENT_DIR
-    pi install git:github.com/jurgjn/pi-llama
+    #export PI_CODING_AGENT_DIR=/opt/pi-agent
+    #mkdir -p $PI_CODING_AGENT_DIR
+    #pi install git:github.com/jurgjn/pi-llama
 
 %test
     rg --version | head -1
@@ -60,7 +60,7 @@ From: vllm/vllm-openai:latest-cu130
 
 %runscript
     set -eu
-    export PI_CODING_AGENT_DIR=/opt/pi-agent
+    #export PI_CODING_AGENT_DIR=/opt/pi-agent
     export LLAMA_BASE_URL=$EU_VIBE_URL/v1
     export LLAMA_API_KEY=$EU_API_KEY
     echo LLAMA_API_KEY is $LLAMA_API_KEY
@@ -73,6 +73,7 @@ From: vllm/vllm-openai:latest-cu130
 
 %help
     Run sandboxed ollama/pi on euler with the following features/fixes/kludges:
+    - If the llama.cpp model list looks stale/wrong in `/model`, reset the cache with `rm -rf $EU_VIBE_DIR/home/pi-agent`
     - Has %runscript that starts the ollama server & then an interactive shell
     - Uses `portpicker` to pick a random open port for ollama to fix `Error: listen tcp 127.0.0.1:11434: bind: address already in use`
     - Neither %runscipt nor %startscript are executed with `singularity shell`

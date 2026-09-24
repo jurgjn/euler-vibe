@@ -36,14 +36,13 @@ cmd_claude() {
     CLAUDE_HOME=$EU_VIBE_DIR/home/claude-eu
     mkdir -p "$CLAUDE_HOME"
     chmod 700 "$CLAUDE_HOME"
-
     OVERLAY_DIR="$TMPDIR/euler-vibe-claude_overlay.$$"
     mkdir -p "$OVERLAY_DIR"/overlay "$OVERLAY_DIR"/tmp
-
-    exec singularity exec \
+    SCREEN_FILE="$OVERLAY_DIR/last_screen.txt"
+    tmux new-session -s "$(basename "$PWD")" -n claude singularity exec \
+        --nv \
         --contain \
         --cleanenv \
-        --nv \
         --home "$CLAUDE_HOME:$HOME" \
         --overlay "$OVERLAY_DIR"/overlay \
         --bind "$OVERLAY_DIR"/tmp:/tmp \
@@ -51,13 +50,24 @@ cmd_claude() {
         --cwd "$PWD" \
         --env TERM="${TERM:-xterm-256color}" \
         --env DISABLE_AUTOUPDATER=1 \
-        "$CLAUDE_IMAGE" claude --dangerously-skip-permissions "$@"
+        "$CLAUDE_IMAGE" claude --dangerously-skip-permissions "$@" \
+        \; set-option -w remain-on-exit on \
+        \; set-hook pane-died "capture-pane -e -J ; save-buffer '$SCREEN_FILE' ; delete-buffer ; kill-session" \
+        || true
+
+    # Print what was on screen when claude exited, minus trailing blank lines
+    if [[ -f "$SCREEN_FILE" ]]; then
+        awk 'NF {for (; n > 0; n--) print ""; print; next} {n++}' "$SCREEN_FILE"
+    fi
+    rm -rf "$OVERLAY_DIR"
 }
 
 cmd_pi() {
+    cmd_serve_local
+    PI_HOME=$EU_VIBE_DIR/home/pi-eu
     OVERLAY_DIR="$TMPDIR/euler-vibe.$$"
-    mkdir -p "$OVERLAY_DIR"/home "$OVERLAY_DIR"/overlay "$OVERLAY_DIR"/tmp
-    exec singularity run \
+    mkdir -p "$OVERLAY_DIR"/overlay "$OVERLAY_DIR"/tmp
+    tmux new-session -s "$(basename "$PWD")" -n pi singularity run \
         --nv \
         --cleanenv \
         --containall \
@@ -65,7 +75,7 @@ cmd_pi() {
         --env EU_API_KEY="no-key" \
         --env EU_VIBE_MODEL="Qwen3.8-27B-UD-Q6_K_XL" \
         --cwd "$PWD" \
-        --home "$OVERLAY_DIR"/home \
+        --home "$PI_HOME:$HOME" \
         --overlay "$OVERLAY_DIR"/overlay \
         --bind "$OVERLAY_DIR"/tmp:/tmp \
         --bind "$PWD:$PWD" \
@@ -94,7 +104,15 @@ cmd_serve() {
 }
 
 cmd_serve_local() {
-    exec $EU_VIBE_DIR/serve/Qwen3.8-27B_rtx_4090_llama.sh
+    #exec $EU_VIBE_DIR/serve/Qwen3.8-27B_rtx_4090_llama.sh
+    if ! tmux has-session -t serve_local 2>/dev/null; then
+        tmux new-session -d -s serve_local '$EU_VIBE_DIR/serve/Qwen3.8-27B_rtx_4090_llama.sh'
+        echo "Started session serve_local"
+    else
+        echo "Session serve_local is already running"
+    fi
+    echo Attach: tmux attach -t serve_local
+    echo Detach: Ctrl-b then d
 }
 
 cmd_scancel() {
