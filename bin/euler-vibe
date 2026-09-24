@@ -8,8 +8,9 @@ export EU_VIBE_PORT=${EU_VIBE_PORT:-27182}
 export EU_VIBE_LOCAL_PORT=27183
 export EU_VIBE_MODEL=${EU_VIBE_MODEL:-deepseek-ai/DeepSeek-V4-Flash-0731}
 
-# Script run by serve_local; bare file names are looked up in serve/
-export EU_VIBE_SERVE_LOCAL=${EU_VIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090_llama.sh}
+# Model setup used by serve_local/pi: a directory with serve.sh (starts vllm/llama)
+# and models.json (pi config); bare names are looked up in serve-local/
+export EU_VIBE_SERVE_LOCAL=${EU_VIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090:2_llama}
 export EU_API_KEY="no-api"
 
 usage() {
@@ -19,15 +20,16 @@ Usage:
 
 Coding agents (run in a tmux session named after the current directory):
     claude          Start Claude Code in a sandboxed container
-    pi              Start pi against the local llama server (starts it if needed)
+    pi              Start pi against the local server (starts it if needed),
+                    using models.json from \$EU_VIBE_SERVE_LOCAL
 
 Models & serving:
     list            List downloaded models
     pull <repo>     Download a model from Hugging Face into models/
     serve [sbatch-args...]
                     Submit a Slurm job serving \$EU_VIBE_MODEL
-    serve_local     Start the local llama server in tmux session 'serve_local'
-                    (script: \$EU_VIBE_SERVE_LOCAL, default $EU_VIBE_SERVE_LOCAL)
+    serve_local     Run serve.sh from \$EU_VIBE_SERVE_LOCAL in tmux session 'serve_local'
+                    (default $EU_VIBE_SERVE_LOCAL; available: $(cd "$EU_VIBE_DIR/serve-local" && ls -d */ | tr -d / | tr '\n' ' '))
     status          Show serve jobs, SSH tunnel and API settings
     scancel         Cancel the serve job
 
@@ -80,9 +82,34 @@ cmd_claude() {
     rm -rf "$OVERLAY_DIR"
 }
 
+# Wait until the local server lists the model (vllm takes minutes to boot)
+wait_for_model() {
+    local model=$1 start=$SECONDS
+    echo -n "Waiting for $model on port $EU_VIBE_PORT"
+    until curl -sf -m 5 -H "Authorization: Bearer no-key" "http://localhost:$EU_VIBE_PORT/v1/models" \
+            | grep -qF "\"$model\""; do
+        if ! tmux has-session -t serve_local 2>/dev/null; then
+            echo
+            echo "Error: session serve_local exited before $model came up" >&2
+            exit 1
+        fi
+        echo -n .
+        sleep 5
+    done
+    echo " ready after $((SECONDS - start))s"
+}
+
 cmd_pi() {
     cmd_serve_local
     PI_HOME=$EU_VIBE_DIR/home/pi-eu
+    mkdir -p "$PI_HOME/.pi/agent"
+    sed "s/\${EU_VIBE_PORT}/$EU_VIBE_PORT/g" "$(serve_local_dir)/models.json" > "$PI_HOME/.pi/agent/models.json"
+    # Default to the first provider/model listed in models.json
+    local provider model
+    read -r provider model < <(python3 -c 'import json, sys
+name, cfg = next(iter(json.load(open(sys.argv[1]))["providers"].items()))
+print(name, cfg["models"][0]["id"])' "$PI_HOME/.pi/agent/models.json")
+    wait_for_model "$model"
     OVERLAY_DIR="$TMPDIR/euler-vibe.$$"
     mkdir -p "$OVERLAY_DIR"/overlay "$OVERLAY_DIR"/tmp
     tmux new-session -s "$(basename "$PWD")" -n pi singularity run \
@@ -91,14 +118,13 @@ cmd_pi() {
         --containall \
         --env EU_VIBE_URL="http://localhost:$EU_VIBE_PORT" \
         --env EU_API_KEY="no-key" \
-        --env EU_VIBE_MODEL="Qwen3.8-27B-UD-Q6_K_XL" \
         --cwd "$PWD" \
         --home "$PI_HOME:$HOME" \
         --overlay "$OVERLAY_DIR"/overlay \
         --bind "$OVERLAY_DIR"/tmp:/tmp \
         --bind "$PWD:$PWD" \
         $EU_VIBE_DIR/images/pi-eu.sif \
-        "$@"
+        --provider "$provider" --model "$model" "$@"
 }
 
 cmd_list() {
@@ -118,19 +144,44 @@ cmd_pull() {
 cmd_serve() {
     mkdir -p $EU_VIBE_DIR/logs
     export EULER_VIBE_LOGS="$EU_VIBE_DIR/logs/serve-%j.out"
-    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve/dsv4-flash_pro_6000.sbatch
+    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve-sbatch/dsv4-flash_pro_6000.sbatch
+}
+
+serve_local_dir() {
+    local dir=$EU_VIBE_SERVE_LOCAL
+    [[ $dir == */* ]] || dir=$EU_VIBE_DIR/serve-local/$dir
+    [[ -f $dir/serve.sh && -f $dir/models.json ]] || {
+        echo "Error: $dir must contain serve.sh and models.json" >&2
+        exit 1
+    }
+    echo "$dir"
 }
 
 cmd_serve_local() {
-    local script=$EU_VIBE_SERVE_LOCAL
-    [[ $script == */* ]] || script=$EU_VIBE_DIR/serve/$script
+    local dir running
+    dir=$(serve_local_dir)
     if ! tmux has-session -t serve_local 2>/dev/null; then
+        # Killing the tmux session can leave the container running, still holding the port
+        if (exec 3<>/dev/tcp/127.0.0.1/$EU_VIBE_PORT) 2>/dev/null; then
+            echo "Error: port $EU_VIBE_PORT is in use but there is no serve_local session:" >&2
+            pgrep -af -- "(llama-server|vllm).*--port $EU_VIBE_PORT" >&2 || true
+            echo "Stop the stale server first, e.g.: pkill -f -- '(llama-server|vllm).*--port $EU_VIBE_PORT'" >&2
+            exit 1
+        fi
         # tmux sessions inherit the server's environment, so pass vars explicitly
         tmux new-session -d -s serve_local "$(printf '%q ' env \
-            EU_VIBE_DIR="$EU_VIBE_DIR" EU_VIBE_PORT="$EU_VIBE_PORT" "$script")"
-        echo "Started session serve_local"
+            EU_VIBE_DIR="$EU_VIBE_DIR" EU_VIBE_PORT="$EU_VIBE_PORT" "$dir/serve.sh")"
+        # Record which setup is served, so pi doesn't pair it with another models.json
+        tmux set-environment -t serve_local EU_VIBE_SERVE_LOCAL_DIR "$dir"
+        echo "Started session serve_local ($(basename "$dir"))"
     else
-        echo "Session serve_local is already running"
+        running=$(tmux show-environment -t serve_local EU_VIBE_SERVE_LOCAL_DIR 2>/dev/null | sed -n 's/^EU_VIBE_SERVE_LOCAL_DIR=//p')
+        if [[ $running != "$dir" ]]; then
+            echo "Error: session serve_local is serving '${running:-unknown}', not '$dir'" >&2
+            echo "Stop it first with: tmux kill-session -t serve_local" >&2
+            exit 1
+        fi
+        echo "Session serve_local is already running ($(basename "$dir"))"
     fi
     echo Attach: tmux attach -t serve_local
     echo Detach: Ctrl-b then d

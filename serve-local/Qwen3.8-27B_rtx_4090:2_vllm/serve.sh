@@ -11,11 +11,10 @@
 
 set -x -e -u -o pipefail
 
-export EU_VIBE_DIR=$(dirname $(dirname $(which euler-vibe)))
-export EU_VIBE_PORT=27182
-
-# EU_VIBE_DIR expected from euler-vibe wrapper
-echo EU_VIBE_DIR is $EU_VIBE_DIR
+# Expected from the euler-vibe wrapper
+: "${EU_VIBE_DIR:?must be set (run via euler-vibe serve_local)}"
+: "${EU_VIBE_PORT:?must be set (run via euler-vibe serve_local)}"
+echo EU_VIBE_DIR is $EU_VIBE_DIR, EU_VIBE_PORT is $EU_VIBE_PORT
 
 # https://hub.docker.com/r/vllm/vllm-openai/tags
 #export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai_qwen38.sif

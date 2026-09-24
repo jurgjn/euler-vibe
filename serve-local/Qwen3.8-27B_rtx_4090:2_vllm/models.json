@@ -1,0 +1,29 @@
+{
+    "providers": {
+        "vllm": {
+            "baseUrl": "http://localhost:${EU_VIBE_PORT}/v1",
+            "api": "openai-completions",
+            "apiKey": "no-key",
+            "models": [
+                {
+                    "id": "Qwen/Qwen3.8-27B-FP8",
+                    "name": "Qwen3.8-27B-FP8",
+                    "reasoning": true,
+                    "input": ["text"],
+                    "contextWindow": 65536,
+                    "maxTokens": 65536,
+                    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                    "compat": {
+                        "supportsStore": false,
+                        "supportsDeveloperRole": false,
+                        "supportsReasoningEffort": false,
+                        "supportsUsageInStreaming": true,
+                        "supportsStrictMode": false,
+                        "maxTokensField": "max_tokens",
+                        "thinkingFormat": "qwen-chat-template"
+                    }
+                }
+            ]
+        }
+    }
+}
