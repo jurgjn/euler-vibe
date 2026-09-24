@@ -2,14 +2,14 @@
 
 set -euo pipefail
 
-# https://docs.hpc.ethz.ch/news/AMD_Instinct_MI300A_evaluation/?h=amd#access
-#export SLURM_CONF=/cluster/adm/slurm-amdgpu/slurm/etc/slurm.conf
-
 # Used to infer locations of config/images/models
 export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
-export EU_VIBE_PORT=27182
+export EU_VIBE_PORT=${EU_VIBE_PORT:-27182}
 export EU_VIBE_LOCAL_PORT=27183
-export EU_VIBE_MODEL=deepseek-ai/DeepSeek-V4-Flash-0731
+export EU_VIBE_MODEL=${EU_VIBE_MODEL:-deepseek-ai/DeepSeek-V4-Flash-0731}
+
+# Script run by serve_local; bare file names are looked up in serve/
+export EU_VIBE_SERVE_LOCAL=${EU_VIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090_llama.sh}
 export EU_API_KEY="no-api"
 
 usage() {
@@ -17,32 +17,34 @@ usage() {
 Usage:
     euler-vibe <command> [args...]
 
-Commands:
-    list    List available models
-    pull    Download model from Hugging Face
-    serve   Start batch job serving a model
-    scancel Stop serve
-    status  Show running jobs
+Coding agents (run in a tmux session named after the current directory):
+    claude          Start Claude Code in a sandboxed container
+    pi              Start pi against the local llama server (starts it if needed)
+
+Models & serving:
+    list            List downloaded models
+    pull <repo>     Download a model from Hugging Face into models/
+    serve [sbatch-args...]
+                    Submit a Slurm job serving \$EU_VIBE_MODEL
+    serve_local     Start the local llama server in tmux session 'serve_local'
+                    (script: \$EU_VIBE_SERVE_LOCAL, default $EU_VIBE_SERVE_LOCAL)
+    status          Show serve jobs, SSH tunnel and API settings
+    scancel         Cancel the serve job
+
+Client setup (eval the output in your shell):
+    activate        Print exports + SSH tunnel command for the serve job
+    deactivate      Print command to close the SSH tunnel
 
 Examples:
     euler-vibe pull Qwen/Qwen3.6-27B
     euler-vibe serve --time=00:10:00
+    eval "\$(euler-vibe activate)"
 
-Cheat sheet for tmux:
-    Active sessions:
-        tmux ls
-
-    Detach session:
-        Ctrl-b then d
-
-    Then resume with:
-        tmux attach -t af3io_compress_local
-
-    To kill a session:
-        Ctrl-b : then type kill-session
-
-    From command line:
-        tmux kill-session -t serve_local
+tmux cheat sheet:
+    tmux ls                         List sessions
+    Ctrl-b then d                   Detach from current session
+    tmux attach -t <session>        Reattach (e.g. serve_local)
+    tmux kill-session -t <session>  Kill a session (or Ctrl-b : kill-session)
 
 EOF
 }
@@ -120,9 +122,12 @@ cmd_serve() {
 }
 
 cmd_serve_local() {
-    #exec $EU_VIBE_DIR/serve/Qwen3.8-27B_rtx_4090_llama.sh
+    local script=$EU_VIBE_SERVE_LOCAL
+    [[ $script == */* ]] || script=$EU_VIBE_DIR/serve/$script
     if ! tmux has-session -t serve_local 2>/dev/null; then
-        tmux new-session -d -s serve_local '$EU_VIBE_DIR/serve/Qwen3.8-27B_rtx_4090_llama.sh'
+        # tmux sessions inherit the server's environment, so pass vars explicitly
+        tmux new-session -d -s serve_local "$(printf '%q ' env \
+            EU_VIBE_DIR="$EU_VIBE_DIR" EU_VIBE_PORT="$EU_VIBE_PORT" "$script")"
         echo "Started session serve_local"
     else
         echo "Session serve_local is already running"
