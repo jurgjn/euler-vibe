@@ -28,6 +28,22 @@ Examples:
     euler-vibe pull Qwen/Qwen3.6-27B
     euler-vibe serve --time=00:10:00
 
+Cheat sheet for tmux:
+    Active sessions:
+        tmux ls
+
+    Detach session:
+        Ctrl-b then d
+
+    Then resume with:
+        tmux attach -t af3io_compress_local
+
+    To kill a session:
+        Ctrl-b : then type kill-session
+
+    From command line:
+        tmux kill-session -t serve_local
+
 EOF
 }
 
