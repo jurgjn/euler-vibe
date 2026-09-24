@@ -76,9 +76,10 @@ ARGS=(
     --override-generation-config.presence_penalty 0.0
     --override-generation-config.repetition_penalty 1.0
 
-    #--max-model-len 262144
+    # Native max context (max_position_embeddings in config.json)
+    --max-model-len 262144
     #--max-model-len 131072
-    --max-model-len 65536
+    #--max-model-len 65536
     #--override-generation-config.max_tokens 131072
 
     #--gpu-memory-utilization 0.92
@@ -96,7 +97,8 @@ ARGS=(
     #--speculative-config.num_speculative_tokens 3
 
     # If you ever want calibrated scales, they can be generated with llm-compressor and baked into a checkpoint, but I wouldn't bother unless you observe quality degradation at long context.
-    #--kv-cache-dtype fp8
+    # Needed for 262144: on 2x rtx_4090, the bf16 KV cache fits ~182K tokens; fp8 roughly doubles this
+    --kv-cache-dtype fp8
 
     # expected on this hardware and there's not much to do beyond adding --disable-custom-all-reduce to silence the warning
     #--disable-custom-all-reduce
