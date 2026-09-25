@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=euler-vibe-serve
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=64
-#SBATCH --mem-per-cpu=4G
-#SBATCH --gpus=rtx_4090:4
-#SBATCH --time=0-12:00:00
-#SBATCH --account=es_beltrao
-#SBATCH --tmp=128G
-
 set -x -e -u -o pipefail
 
 # Expected from the euler-vibe wrapper
@@ -18,7 +8,7 @@ echo EU_VIBE_DIR is $EU_VIBE_DIR, EU_VIBE_PORT is $EU_VIBE_PORT
 
 # https://hub.docker.com/r/vllm/vllm-openai/tags
 #export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai_qwen38.sif
-export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai_v0.26.0-x86_64.sif
+export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai_v0.29.0-x86_64.sif
 
 # There are two secondary wins from FP8 on your hardware that matter almost as much as raw speed.
 # First, KV-cache headroom: 27 GB of freed VRAM across the node means you can actually sustain long contexts at 256K without starving the cache.
@@ -59,10 +49,11 @@ ARGS=(
     $EU_VIBE_MODEL
 
     # https://recipes.vllm.ai/Qwen/Qwen3.8-27B-FP8
-    --tensor-parallel-size $SLURM_GPUS_ON_NODE
+    --tensor-parallel-size ${SLURM_GPUS_ON_NODE:-$(nvidia-smi -L | wc -l)}
     --enable-auto-tool-choice
     --tool-call-parser qwen3_coder
     --reasoning-parser qwen3
+    # Recipe uses 3; 2 wastes less compute on rejected drafts, benchmark both
     --speculative-config.method mtp
     --speculative-config.num_speculative_tokens 3
     --language-model-only
@@ -82,19 +73,18 @@ ARGS=(
     #--max-model-len 65536
     #--override-generation-config.max_tokens 131072
 
-    #--gpu-memory-utilization 0.92
+    # Default is 0.9; the GPUs are dedicated to vllm, so give the rest to the KV cache
+    --gpu-memory-utilization 0.95
     # Give the KV cache an explicit, smaller budget
     #--kv-cache-memory 12884901888
 
     --max-num-seqs 4
-    #--max-num-batched-tokens 8192
+    # Larger prefill chunks speed up long agent prompts
+    --max-num-batched-tokens 16384
 
-    # Prefix caching is clearly paying off (hit rates climbing to 85%+)
+    # Prefix caching is on by default (also for this hybrid model, with mamba_cache_mode=align);
+    # hit rates climbed to 85%+ with agent sessions
     #--enable-prefix-caching
-
-    # Start with 2 as a sane default on 4090s; going to 3 buys a bit more single-stream speed but costs more wasted compute at higher concurrency.
-    #--speculative-config.method mtp
-    #--speculative-config.num_speculative_tokens 3
 
     # If you ever want calibrated scales, they can be generated with llm-compressor and baked into a checkpoint, but I wouldn't bother unless you observe quality degradation at long context.
     # Needed for 262144: on 2x rtx_4090, the bf16 KV cache fits ~182K tokens; fp8 roughly doubles this
@@ -103,9 +93,10 @@ ARGS=(
     # expected on this hardware and there's not much to do beyond adding --disable-custom-all-reduce to silence the warning
     #--disable-custom-all-reduce
 
-    # Allow connections to vllm from other machines
-    --host 0.0.0.0
+    # Only reachable from this node (pi connects via localhost); key matches models.json
+    --host 127.0.0.1
     --port $EU_VIBE_PORT
+    --api-key no-key
 )
 echo ${FROM} ARGS is "${ARGS[@]}"
 

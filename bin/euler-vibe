@@ -10,7 +10,7 @@ export EU_VIBE_MODEL=${EU_VIBE_MODEL:-deepseek-ai/DeepSeek-V4-Flash-0731}
 
 # Model setup used by serve_local/pi: a directory with serve.sh (starts vllm/llama)
 # and models.json (pi config); bare names are looked up in serve-local/
-export EU_VIBE_SERVE_LOCAL=${EU_VIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090:2_llama}
+export EU_VIBE_SERVE_LOCAL=${EU_VIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090:2_vllm}
 export EU_API_KEY="no-api"
 
 # Extra singularity/apptainer args for the claude/pi containers, e.g. per-project
