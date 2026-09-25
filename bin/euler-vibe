@@ -30,6 +30,7 @@ Models & serving:
                     Submit a Slurm job serving \$EU_VIBE_MODEL
     serve_local     Run serve.sh from \$EU_VIBE_SERVE_LOCAL in tmux session 'serve_local'
                     (default $EU_VIBE_SERVE_LOCAL; available: $(cd "$EU_VIBE_DIR/serve-local" && ls -d */ | tr -d / | tr '\n' ' '))
+                    (output also saved to logs/serve_local-<date>-<time>.log)
     status          Show serve jobs, SSH tunnel and API settings
     scancel         Cancel the serve job
 
@@ -141,9 +142,15 @@ cmd_pull() {
         lfs clone https://huggingface.co/"$@" "$@"
 }
 
+# Timestamped log file for a serve run, e.g. logs/serve-20260924-171500.log
+new_log() {
+    mkdir -p "$EU_VIBE_DIR/logs"
+    echo "$EU_VIBE_DIR/logs/$1-$(date +%Y%m%d-%H%M%S).log"
+}
+
 cmd_serve() {
-    mkdir -p $EU_VIBE_DIR/logs
-    export EULER_VIBE_LOGS="$EU_VIBE_DIR/logs/serve-%j.out"
+    export EULER_VIBE_LOGS=$(new_log serve)
+    echo "Log: $EULER_VIBE_LOGS"
     sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve-sbatch/dsv4-flash_pro_6000.sbatch
 }
 
@@ -158,7 +165,7 @@ serve_local_dir() {
 }
 
 cmd_serve_local() {
-    local dir running
+    local dir running log
     dir=$(serve_local_dir)
     if ! tmux has-session -t serve_local 2>/dev/null; then
         # Killing the tmux session can leave the container running, still holding the port
@@ -168,12 +175,14 @@ cmd_serve_local() {
             echo "Stop the stale server first, e.g.: pkill -f -- '(llama-server|vllm).*--port $EU_VIBE_PORT'" >&2
             exit 1
         fi
-        # tmux sessions inherit the server's environment, so pass vars explicitly
+        # tmux sessions inherit the server's environment, so pass vars explicitly;
+        # tee keeps the full output, as the tmux scrollback is limited
+        log=$(new_log serve_local)
         tmux new-session -d -s serve_local "$(printf '%q ' env \
-            EU_VIBE_DIR="$EU_VIBE_DIR" EU_VIBE_PORT="$EU_VIBE_PORT" "$dir/serve.sh")"
+            EU_VIBE_DIR="$EU_VIBE_DIR" EU_VIBE_PORT="$EU_VIBE_PORT" "$dir/serve.sh") 2>&1 | tee $(printf '%q' "$log")"
         # Record which setup is served, so pi doesn't pair it with another models.json
         tmux set-environment -t serve_local EU_VIBE_SERVE_LOCAL_DIR "$dir"
-        echo "Started session serve_local ($(basename "$dir"))"
+        echo "Started session serve_local ($(basename "$dir")), log: $log"
     else
         running=$(tmux show-environment -t serve_local EU_VIBE_SERVE_LOCAL_DIR 2>/dev/null | sed -n 's/^EU_VIBE_SERVE_LOCAL_DIR=//p')
         if [[ $running != "$dir" ]]; then
