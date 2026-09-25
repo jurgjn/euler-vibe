@@ -190,11 +190,19 @@ cmd_serve_local() {
             echo "Stop the stale server first, e.g.: pkill -f -- '(llama-server|vllm).*--port $EU_VIBE_PORT'" >&2
             exit 1
         fi
-        # tmux sessions inherit the server's environment, so pass vars explicitly;
+        # tmux sessions inherit the server's environment, possibly from an older
+        # Slurm job, so drop its Slurm/GPU vars and pass this job's explicitly;
         # tee keeps the full output, as the tmux scrollback is limited
+        local unset_vars=() set_vars=(EU_VIBE_DIR="$EU_VIBE_DIR" EU_VIBE_PORT="$EU_VIBE_PORT") v
+        for v in $(tmux show-environment -g 2>/dev/null | sed -n 's/^\(SLURM_[A-Z0-9_]*\|CUDA_VISIBLE_DEVICES\)=.*/\1/p'); do
+            unset_vars+=(-u "$v")
+        done
+        for v in TMPDIR CUDA_VISIBLE_DEVICES $(compgen -e | grep '^SLURM_'); do
+            [[ -v $v ]] && set_vars+=("$v=${!v}")
+        done
         log=$(new_log serve_local)
-        tmux new-session -d -s serve_local "$(printf '%q ' env \
-            EU_VIBE_DIR="$EU_VIBE_DIR" EU_VIBE_PORT="$EU_VIBE_PORT" "$dir/serve.sh") 2>&1 | tee $(printf '%q' "$log")"
+        tmux new-session -d -s serve_local "$(printf '%q ' env "${unset_vars[@]}" "${set_vars[@]}" \
+            "$dir/serve.sh") 2>&1 | tee $(printf '%q' "$log")"
         # Record which setup is served, so pi doesn't pair it with another models.json
         tmux set-environment -t serve_local EU_VIBE_SERVE_LOCAL_DIR "$dir"
         echo "Started session serve_local ($(basename "$dir")), log: $log"
