@@ -20,8 +20,14 @@
                         "supportsUsageInStreaming": true,
                         "supportsStrictMode": false,
                         "maxTokensField": "max_tokens",
-                        "thinkingFormat": "qwen-chat-template"
-                    }
+                        "thinkingFormat": "chat-template",
+                        "chatTemplateKwargs": {
+                            "enable_thinking": {"$var": "thinking.enabled"},
+                            "preserve_thinking": true,
+                            "reasoning_effort": {"$var": "thinking.effort", "omitWhenOff": true}
+                        }
+                    },
+                    "thinkingLevelMap": {"minimal": null, "low": "low", "medium": "medium", "high": null, "xhigh": "xhigh"}
                 }
             ]
         }
