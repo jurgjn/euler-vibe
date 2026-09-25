@@ -18,6 +18,12 @@ export EU_API_KEY="no-api"
 # (split on whitespace, so paths containing spaces are not supported)
 read -ra EU_VIBE_APPTAINER_ARGS_ARRAY <<< "${EU_VIBE_APPTAINER_ARGS:-}"
 
+# Paperpile library from bin/pget, mounted read-only into claude if present
+export EU_VIBE_PAPERPILE_DIR=${EU_VIBE_PAPERPILE_DIR:-$EU_VIBE_DIR/paperpile}
+if [[ -d $EU_VIBE_PAPERPILE_DIR ]]; then
+    EU_VIBE_APPTAINER_ARGS_ARRAY+=(--bind "$EU_VIBE_PAPERPILE_DIR:$EU_VIBE_PAPERPILE_DIR:ro")
+fi
+
 usage() {
     cat <<EOF
 Usage:

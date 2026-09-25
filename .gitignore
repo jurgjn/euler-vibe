@@ -8,3 +8,6 @@ home/
 
 # Built container images.
 images/*.sif
+
+# Paperpile library downloaded by bin/pget
+paperpile/

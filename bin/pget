@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
+
+# Persistent settings written by `pget setup` (kept outside the container homes)
+PGET_CONF=${PGET_CONF:-$HOME/.config/euler-vibe/pget.conf}
+[[ -f $PGET_CONF ]] && source "$PGET_CONF"
+
+# Where the library ends up; euler-vibe claude mounts it read-only if it exists
+export EU_VIBE_PAPERPILE_DIR=${EU_VIBE_PAPERPILE_DIR:-$EU_VIBE_DIR/paperpile}
+# rclone remote:path of the Paperpile folder in Google Drive
+EU_VIBE_PAPERPILE_REMOTE=${EU_VIBE_PAPERPILE_REMOTE:-paperpile:Paperpile}
+# Paperpile BibTeX auto-sync link; if unset, the newest *.bib in the Drive folder is used
+EU_VIBE_PAPERPILE_BIB_URL=${EU_VIBE_PAPERPILE_BIB_URL:-}
+
+SKILL_DIR=$EU_VIBE_DIR/home/claude-eu/.claude/skills/paperpile
+
+usage() {
+    cat <<EOF
+Usage:
+    pget <command>
+
+Download a Paperpile library (BibTeX + PDFs from Google Drive) and turn it
+into plain files that Claude Code can grep and read.
+
+Commands:
+    setup [bib-url] Install rclone, connect it (read-only) to Google Drive, and
+                    optionally save the Paperpile BibTeX auto-sync link
+    sync            Download BibTeX + PDFs, extract text, rebuild the index
+    index           Rebuild the index from already downloaded files
+    status          Show settings and library size
+
+Output (\$EU_VIBE_PAPERPILE_DIR, currently $EU_VIBE_PAPERPILE_DIR):
+    CLAUDE.md       How to search the library
+    index.tsv       One line per paper: citekey, year, author, journal, title, labels, pdf
+    library.jsonl   Metadata per paper (incl. abstract), no full text
+    library.bib     BibTeX as exported by Paperpile
+    papers/<citekey>.md
+                    Metadata, abstract and full text of each paper
+    pdfs/           Mirror of the Paperpile folder in Google Drive
+
+\`euler-vibe claude\` mounts this directory read-only and pget installs a
+'paperpile' skill into the claude-eu home, so Claude finds it by itself.
+
+Settings (environment or $PGET_CONF):
+    EU_VIBE_PAPERPILE_DIR       Output directory
+    EU_VIBE_PAPERPILE_REMOTE    rclone path of the Drive folder (default paperpile:Paperpile)
+    EU_VIBE_PAPERPILE_BIB_URL   BibTeX auto-sync link, from Paperpile: Settings >
+                                Workflows and integrations > BibTeX export
+                                (a paperpile.com link, or a Google Drive file link)
+EOF
+}
+
+# Use rclone from PATH, or a copy downloaded into cache/
+rclone_bin() {
+    if command -v rclone >/dev/null; then
+        command -v rclone
+    else
+        echo "$EU_VIBE_DIR/cache/rclone/rclone"
+    fi
+}
+
+install_rclone() {
+    local bin tmp
+    bin=$(rclone_bin)
+    [[ -x $bin ]] && return
+    echo "Downloading rclone into $(dirname "$bin")"
+    tmp=$(mktemp -d)
+    curl -sSfLo "$tmp/rclone.zip" https://downloads.rclone.org/rclone-current-linux-amd64.zip
+    unzip -q "$tmp/rclone.zip" -d "$tmp"
+    mkdir -p "$(dirname "$bin")"
+    mv "$tmp"/rclone-*-linux-amd64/rclone "$bin"
+    rm -rf "$tmp"
+}
+
+save_setting() {
+    mkdir -p "$(dirname "$PGET_CONF")"
+    touch "$PGET_CONF"
+    chmod 600 "$PGET_CONF"
+    sed -i "/^$1=/d" "$PGET_CONF"
+    echo "$1=$(printf '%q' "$2")" >> "$PGET_CONF"
+    echo "Saved $1 to $PGET_CONF"
+}
+
+cmd_setup() {
+    install_rclone
+    local rclone remote=${EU_VIBE_PAPERPILE_REMOTE%%:*}
+    rclone=$(rclone_bin)
+    if [[ $# -gt 0 ]]; then
+        save_setting EU_VIBE_PAPERPILE_BIB_URL "$1"
+    fi
+    if "$rclone" listremotes | grep -qx "$remote:"; then
+        echo "rclone remote '$remote:' already configured (redo with: $rclone config reconnect $remote:)"
+    else
+        cat <<EOF
+
+Connecting rclone to Google Drive (read-only). rclone will print a
+http://127.0.0.1:53682/... link; to open it in your laptop's browser, first
+forward the port from a laptop terminal:
+
+    ssh -L 53682:localhost:53682 -J euler.ethz.ch $(hostname)
+
+(Alternatively, answer 'n' in \`$rclone config\` and use \`rclone authorize\`
+on a machine with a browser.)
+
+EOF
+        "$rclone" config create "$remote" drive scope=drive.readonly --no-output
+    fi
+    echo
+    echo "Paperpile folder in Drive ($EU_VIBE_PAPERPILE_REMOTE):"
+    "$rclone" lsf "$EU_VIBE_PAPERPILE_REMOTE" | head -20
+    echo
+    echo "Next: pget sync"
+}
+
+cmd_sync() {
+    local rclone dir=$EU_VIBE_PAPERPILE_DIR
+    install_rclone
+    rclone=$(rclone_bin)
+    mkdir -p "$dir/pdfs"
+
+    echo "Syncing $EU_VIBE_PAPERPILE_REMOTE -> $dir/pdfs"
+    "$rclone" sync "$EU_VIBE_PAPERPILE_REMOTE" "$dir/pdfs" \
+        --exclude "/Trashed Papers/**" --exclude "/Starred Papers/**" \
+        --include "*.{pdf,PDF,bib}" --drive-skip-gdocs --fast-list \
+        --transfers 8 --stats 30s --stats-one-line -v 2>&1 | grep -v ': Copied (new)$' || true
+
+    if [[ $EU_VIBE_PAPERPILE_BIB_URL =~ ^https://(docs|drive)\.google\.com/.*/d/([^/?]+) ]]; then
+        # BibTeX exported by Paperpile into Google Drive: fetch it via rclone by file id
+        echo "Downloading BibTeX from Google Drive"
+        rm -f "$dir/library.bib.tmp"
+        "$rclone" backend copyid "${EU_VIBE_PAPERPILE_REMOTE%%:*}:" "${BASH_REMATCH[2]}" "$dir/library.bib.tmp"
+        mv "$dir/library.bib.tmp" "$dir/library.bib"
+    elif [[ -n $EU_VIBE_PAPERPILE_BIB_URL ]]; then
+        echo "Downloading BibTeX from the auto-sync link"
+        curl -sSfLo "$dir/library.bib.tmp" "$EU_VIBE_PAPERPILE_BIB_URL"
+        mv "$dir/library.bib.tmp" "$dir/library.bib"
+    else
+        local bib
+        bib=$(find "$dir/pdfs" -iname '*.bib' -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+        if [[ -z $bib ]]; then
+            echo "Error: no BibTeX; set a link with \`pget setup <bib-url>\`" \
+                 "or enable Paperpile's BibTeX export to Google Drive" >&2
+            exit 1
+        fi
+        echo "Using BibTeX from Drive: ${bib#$dir/pdfs/}"
+        cp "$bib" "$dir/library.bib"
+    fi
+    cmd_index
+}
+
+cmd_index() {
+    uv run --quiet --script "$EU_VIBE_DIR/bin/pget-index.py" "$EU_VIBE_PAPERPILE_DIR"
+    install_skill
+}
+
+# A user-level skill, so Claude looks at the library without being told where it is
+install_skill() {
+    local n
+    n=$(($(wc -l < "$EU_VIBE_PAPERPILE_DIR/index.tsv") - 1))
+    mkdir -p "$SKILL_DIR"
+    cat > "$SKILL_DIR/SKILL.md" <<EOF
+---
+name: paperpile
+description: Search and read the user's Paperpile reference library ($n papers with abstracts and full text) at $EU_VIBE_PAPERPILE_DIR. Use when the user asks about papers, literature, references, citations, prior work, or what "a paper" or "the literature" says, and when adding citations/BibTeX to a manuscript.
+---
+
+The user's Paperpile library is mounted read-only at \`$EU_VIBE_PAPERPILE_DIR\`.
+Read \`$EU_VIBE_PAPERPILE_DIR/CLAUDE.md\` for the layout and search recipes.
+EOF
+    echo "Installed Claude skill: $SKILL_DIR/SKILL.md"
+}
+
+cmd_status() {
+    echo "PGET_CONF=$PGET_CONF"
+    echo "EU_VIBE_PAPERPILE_DIR=$EU_VIBE_PAPERPILE_DIR"
+    echo "EU_VIBE_PAPERPILE_REMOTE=$EU_VIBE_PAPERPILE_REMOTE"
+    echo "EU_VIBE_PAPERPILE_BIB_URL=${EU_VIBE_PAPERPILE_BIB_URL:+(set)}"
+    echo "rclone: $(rclone_bin)"
+    if [[ -f $EU_VIBE_PAPERPILE_DIR/index.tsv ]]; then
+        echo "Papers: $(($(wc -l < "$EU_VIBE_PAPERPILE_DIR/index.tsv") - 1))," \
+             "with PDF: $(awk -F'\t' 'NR>1 && $7' "$EU_VIBE_PAPERPILE_DIR/index.tsv" | wc -l)," \
+             "size: $(du -sh "$EU_VIBE_PAPERPILE_DIR" | cut -f1)"
+    fi
+}
+
+case "${1:-}" in
+    setup) shift; cmd_setup "$@" ;;
+    sync) cmd_sync ;;
+    index) cmd_index ;;
+    status) cmd_status ;;
+    -h|--help|"") usage ;;
+    *) echo "Error: unknown command '$1'" >&2; echo; usage; exit 1 ;;
+esac
