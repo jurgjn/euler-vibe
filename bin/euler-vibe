@@ -13,6 +13,11 @@ export EU_VIBE_MODEL=${EU_VIBE_MODEL:-deepseek-ai/DeepSeek-V4-Flash-0731}
 export EU_VIBE_SERVE_LOCAL=${EU_VIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090:2_llama}
 export EU_API_KEY="no-api"
 
+# Extra singularity/apptainer args for the claude/pi containers, e.g. per-project
+# read-only mounts: EU_VIBE_APPTAINER_ARGS="--bind /cluster/work/foo:/cluster/work/foo:ro"
+# (split on whitespace, so paths containing spaces are not supported)
+read -ra EU_VIBE_APPTAINER_ARGS_ARRAY <<< "${EU_VIBE_APPTAINER_ARGS:-}"
+
 usage() {
     cat <<EOF
 Usage:
@@ -22,6 +27,8 @@ Coding agents (run in a tmux session named after the current directory):
     claude          Start Claude Code in a sandboxed container
     pi              Start pi against the local server (starts it if needed),
                     using models.json from \$EU_VIBE_SERVE_LOCAL
+                    (both pass \$EU_VIBE_APPTAINER_ARGS to singularity, e.g.
+                    EU_VIBE_APPTAINER_ARGS="--bind /path/to/data:/path/to/data:ro")
 
 Models & serving:
     list            List downloaded models
@@ -71,6 +78,7 @@ cmd_claude() {
         --cwd "$PWD" \
         --env TERM="${TERM:-xterm-256color}" \
         --env DISABLE_AUTOUPDATER=1 \
+        "${EU_VIBE_APPTAINER_ARGS_ARRAY[@]}" \
         "$CLAUDE_IMAGE" claude --dangerously-skip-permissions "$@" \
         \; set-option -w remain-on-exit on \
         \; set-hook pane-died "capture-pane -e -J ; save-buffer '$SCREEN_FILE' ; delete-buffer ; kill-session" \
@@ -124,6 +132,7 @@ print(name, cfg["models"][0]["id"])' "$PI_HOME/.pi/agent/models.json")
         --overlay "$OVERLAY_DIR"/overlay \
         --bind "$OVERLAY_DIR"/tmp:/tmp \
         --bind "$PWD:$PWD" \
+        "${EU_VIBE_APPTAINER_ARGS_ARRAY[@]}" \
         $EU_VIBE_DIR/images/pi-eu.sif \
         --provider "$provider" --model "$model" "$@"
 }
