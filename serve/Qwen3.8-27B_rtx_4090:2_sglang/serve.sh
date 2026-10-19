@@ -5,6 +5,7 @@ set -v -x -e -u -o pipefail
 : "${EUVIBE_DIR:?must be set}"
 : "${EUVIBE_PORT:?must be set}"
 : "${EUVIBE_MODEL:?must be set}"
+: "${EUVIBE_SERVED_MODEL_NAME:?must be set}"
 : "${EUVIBE_DRAFT:?must be set}"
 : "${EUVIBE_CONTEXT_LENGTH:?must be set}"
 
@@ -43,6 +44,7 @@ ARGS=(
     # https://recipes.vllm.ai/Qwen/Qwen3.8-27B-FP8
     --tp ${SLURM_GPUS_ON_NODE:-$(nvidia-smi -L | wc -l)}
     --model-path $EUVIBE_MODEL
+    --served-model-name $EUVIBE_SERVED_MODEL_NAME
 
     --max-running-requests 2
     --context-length $EUVIBE_CONTEXT_LENGTH

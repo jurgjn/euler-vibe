@@ -1,6 +1,6 @@
 {
   // Use https://huggingface.co/Qwen/Qwen3.8-27B-FP8 running on localhost served by sglang
-  // pi --provider sglang --model "Qwen/Qwen3.8-27B-FP8"
+  // pi --provider sglang --model "$EUVIBE_SERVED_MODEL_NAME"
   // sglang needs --tool-call-parser qwen3_coder --reasoning-parser qwen3
   "$schema": "https://pi.dev/schemas/models.schema.json",
   "providers": {
@@ -10,8 +10,8 @@
       "apiKey": "$OPENAI_API_KEY",
       "models": [
         {
-          "id": "Qwen/Qwen3.8-27B-FP8",
-          "name": "Qwen/Qwen3.8-27B-FP8",
+          "id": "$EUVIBE_SERVED_MODEL_NAME",
+          "name": "$EUVIBE_SERVED_MODEL_NAME",
           "reasoning": true,
           "input": [
             "text",

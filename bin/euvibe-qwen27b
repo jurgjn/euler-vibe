@@ -7,7 +7,10 @@ export EUVIBE_DIR=$(dirname $(dirname $(realpath $0)))
 export EUVIBE_PORT=${EUVIBE_PORT:-27182}
 export EUVIBE_MODEL=${EUVIBE_MODEL:-Qwen/Qwen3.8-27B-FP8}
 #export EUVIBE_MODEL=${EUVIBE_MODEL:-bytkim/Qwen3.8-27B-pi-FP8}
-export EUVIBE_DRAFT=${EUVIBE_MODEL:-incoai/Qwen3.8-27B-DFlash2}
+# Name the server exposes the model as (sglang --served-model-name); also what
+# pi selects with --model and reports as $PI_MODEL, e.g. in commit trailers
+export EUVIBE_SERVED_MODEL_NAME=${EUVIBE_SERVED_MODEL_NAME:-qwen3.8-27b}
+export EUVIBE_DRAFT=${EUVIBE_DRAFT:-incoai/Qwen3.8-27B-DFlash2}
 
 export EUVIBE_SERVE=${EUVIBE_SERVE:-$EUVIBE_DIR/serve/Qwen3.8-27B_rtx_4090:2_sglang}
 # Default session name is the script's file name. tmux turns '.' and ':' into
@@ -165,6 +168,7 @@ cmd_pi() {
                   -e TMPDIR="${TMPDIR:-/tmp}" \
                   -e EUVIBE_PORT="$EUVIBE_PORT" \
                   -e EUVIBE_MODEL="$EUVIBE_MODEL" \
+                  -e EUVIBE_SERVED_MODEL_NAME="$EUVIBE_SERVED_MODEL_NAME" \
                   -e EUVIBE_SERVE="$EUVIBE_SERVE" \
                   -e EUVIBE_TMUX_SESSION="$EUVIBE_TMUX_SESSION" \
                   -e EUVIBE_CONTEXT_LENGTH="$EUVIBE_CONTEXT_LENGTH" \
@@ -196,9 +200,15 @@ cmd_pi_run() {
     envsubst '
       $OPENAI_BASE_URL
       $OPENAI_API_KEY
+      $EUVIBE_SERVED_MODEL_NAME
       $EUVIBE_PI_CONTEXT_WINDOW
     ' < "$EUVIBE_SERVE/models.template.jsonc" \
     > "$PI_CODING_AGENT_DIR/models.json"
+
+    # Copied verbatim (no envsubst): it refers to pi's own $PI_MODEL/$PI_PROVIDER
+    if [[ -f "$EUVIBE_SERVE/APPEND_SYSTEM.md" ]]; then
+        cp "$EUVIBE_SERVE/APPEND_SYSTEM.md" "$PI_CODING_AGENT_DIR/APPEND_SYSTEM.md"
+    fi
 
     settings="$PI_CODING_AGENT_DIR/settings.json"
     if [[ ! -e "$settings" ]]; then
@@ -230,7 +240,7 @@ EOF
         --bind "$OVERLAY_DIR"/tmp:/tmp \
         --home "$PWD:$PWD" \
         "$EUVIBE_DIR/images/pi-eu.sif" \
-        --provider sglang --model "$EUVIBE_MODEL" --thinking xhigh "$@"
+        --provider sglang --model "$EUVIBE_SERVED_MODEL_NAME" --thinking xhigh "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -257,6 +267,8 @@ cmd_serve_start() {
         -e EUVIBE_DIR="$EUVIBE_DIR"
         -e EUVIBE_PORT="$EUVIBE_PORT"
         -e EUVIBE_MODEL="$EUVIBE_MODEL"
+        -e EUVIBE_SERVED_MODEL_NAME="$EUVIBE_SERVED_MODEL_NAME"
+        -e EUVIBE_DRAFT="$EUVIBE_DRAFT"
         -e EUVIBE_SERVE="$EUVIBE_SERVE"
         -e EUVIBE_CONTEXT_LENGTH="$EUVIBE_CONTEXT_LENGTH"
         -e OPENAI_API_KEY="$OPENAI_API_KEY"

@@ -14,10 +14,10 @@ printf '%s\n%s\n' "$PI_MODEL" "$PI_PROVIDER"
 
 Re-check before every commit rather than caching the result, because the user may switch models during the session and pi updates these variables immediately.
 
-Build the trailer value as `<PI_MODEL> <noreply@<PI_PROVIDER>.invalid>`, using both values exactly as printed (do not prettify, expand, or "correct" them). Example:
+Build the trailer value as `<PI_MODEL> <pi-agent@<PI_PROVIDER>.invalid>`, using both values exactly as printed (do not prettify, expand, or "correct" them). Example:
 
 ```
-Co-authored-by: claude-sonnet-4-5 <noreply@anthropic.invalid>
+Co-authored-by: claude-sonnet-4-5 <pi-agent@anthropic.invalid>
 ```
 
 If either variable is empty, omit the trailer and tell the user it could not be determined. Do not substitute a guess.
