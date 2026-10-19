@@ -11,3 +11,7 @@ images/*.sif
 
 # Paperpile library downloaded by bin/pget
 paperpile/
+
+# Downloaded model weights; only the README with the download commands is tracked
+models/*
+!models/README.md
