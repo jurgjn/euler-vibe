@@ -15,3 +15,16 @@ paperpile/
 # Downloaded model weights; only the README with the download commands is tracked
 models/*
 !models/README.md
+
+# Experimental serving setups, kept local
+serve-dev/
+
+# Logs (tmux, sbatch output)
+*.log
+logs/*
+
+# Runtime caches (torch compile, JIT kernels, flashinfer autotune, rclone, ...)
+cache/
+
+# Snakemake state from building images
+images/.snakemake-eu/

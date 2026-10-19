@@ -1,0 +1,21 @@
+# batch-infer start singularity_pull
+singularity:
+  container_dir: /cluster/project/beltrao/jjaenes/euler-vibe/images
+
+  # https://hub.docker.com/r/lmsysorg/sglang/tags
+  pull: docker://lmsysorg/sglang:v0.5.21
+
+  # https://hub.docker.com/r/vllm/vllm-openai/tags?name=x86_64
+  #pull: docker://vllm/vllm-openai:v0.31.0-x86_64
+  #pull: docker://vllm/vllm-openai:v0.29.0-x86_64
+
+  # https://github.com/local-inference-lab/rtx6kpro/blob/master/models/ds4dspark-v20.md
+  #pull: docker://voipmonitor/vllm:gilded-gnosis-v20-vllm966d57c-sibbbdccc-fi801d57a-cu132-20260803-r27
+  #pull: docker://voipmonitor/vllm:gilded-gnosis-v20-vllmf5981f1-si2b9bf2a-fi801d57a-cu132-20260803-r24
+
+  # https://www.linkedin.com/pulse/running-deepseek-v4-flash-700-tokenss-2x-rtx-pro-6000-ovidiu-dan-qo8nc
+  #pull: docker://ghcr.io/ormandj/vllm-deepseek-v4-flash-sm120:dspark
+  #pull: docker://voipmonitor/vllm:lucifer-vllm7c6bbf4-fi3395b41aa8d-dg324aced12c-tk9801a7-cu132-20260609
+
+  # https://github.com/ggml-org/llama.cpp/pkgs/container/llama.cpp
+  #pull: docker://ghcr.io/ggml-org/llama.cpp:server-cuda13-b11641
