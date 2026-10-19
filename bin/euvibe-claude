@@ -3,6 +3,7 @@
 # Shows last session id / command 
 #
 # EU_CLAUDE_APPTAINER_ARGS - extra bind mounts etc
+# .euvibe/mounts in $PWD - project-specific bind mounts, see read_project_mounts
 # EU_CLAUDE_ARGS - extra args to claude
 # .euler-claude/claude-hpc used for CLAUDE_CONFIG_DIR such that every claude config is separate
 # .euler-claude/image.sif ?
@@ -11,6 +12,66 @@
 # ~/.euler-claude/.credentials.json - used to skip authentication if possible
 
 set -euo pipefail
+
+# Read extra bind mounts for this project from .euvibe/mounts in the current
+# directory into the array EUVIBE_MOUNT_ARGS (as --bind <spec> pairs). One
+# mount per line in singularity's --bind format, src[:dst[:opts]], e.g.
+#     /cluster/work/beltrao/jjaenes/data           # same path inside
+#     ~/scratch:/scratch:ro
+#     $WORK/26.06_pstQTL::ro                       # empty dst: same path, ro
+#     ${DATA}/*.parquet::ro                        # one mount per match
+# Blank lines and # comments are ignored. $VAR and ${VAR} are replaced from
+# the environment (an unset variable is an error), a leading ~ expands to
+# $HOME, a relative src is taken relative to the project directory and an
+# empty dst means the same path as src. A src containing *, ? or [ is a glob:
+# each match is mounted at its own path (dst must be empty), and no matches
+# is fine. Any other src must exist, rather than letting singularity abort.
+read_project_mounts() {
+    EUVIBE_MOUNT_ARGS=()
+    local file="$PWD/.euvibe/mounts" line out name src dst opts m
+    local var_re='\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)'
+    local -a matches
+    [[ -f "$file" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line%%#*}
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        [[ -n "$line" ]] || continue
+
+        out=
+        while [[ "$line" =~ $var_re ]]; do
+            name=${BASH_REMATCH[1]:-${BASH_REMATCH[2]}}
+            if [[ ! -v $name ]]; then
+                echo "$file: \$$name is not set" >&2
+                return 1
+            fi
+            out+=${line%%"${BASH_REMATCH[0]}"*}${!name}
+            line=${line#*"${BASH_REMATCH[0]}"}
+        done
+        line=$out$line
+
+        IFS=: read -r src dst opts <<< "$line"
+        [[ "$src" == "~" || "$src" == "~/"* ]] && src=$HOME${src:1}
+        [[ "$src" == /* ]] || src=$PWD/$src
+
+        if [[ "$src" == *[*?[]* ]]; then
+            if [[ -n "$dst" ]]; then
+                echo "$file: glob $src needs an empty dst (src::opts)" >&2
+                return 1
+            fi
+            mapfile -t matches < <(compgen -G "$src" || true)
+        elif [[ -e "$src" ]]; then
+            matches=("$src")
+        else
+            echo "$file: $src does not exist" >&2
+            return 1
+        fi
+
+        for m in "${matches[@]}"; do
+            EUVIBE_MOUNT_ARGS+=(--bind "$m:${dst:-$m}${opts:+:$opts}")
+        done
+    done < "$file"
+}
 
 # Used to infer locations of config/images/models
 export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
@@ -21,6 +82,7 @@ mkdir -p "$CLAUDE_HOME"
 chmod 700 "$CLAUDE_HOME"
 OVERLAY_DIR="$TMPDIR/euler-vibe-claude_overlay.$$"
 mkdir -p "$OVERLAY_DIR"/overlay "$OVERLAY_DIR"/tmp
+read_project_mounts
 
 tmux new-session -s "$(basename "$PWD")" -n claude singularity exec \
     --nv \
@@ -30,6 +92,7 @@ tmux new-session -s "$(basename "$PWD")" -n claude singularity exec \
     --overlay "$OVERLAY_DIR"/overlay \
     --bind "$OVERLAY_DIR"/tmp:/tmp \
     --bind "$PWD:$PWD" \
+    "${EUVIBE_MOUNT_ARGS[@]}" \
     "$@" \
     --cwd "$PWD" \
     --env TERM="${TERM:-xterm-256color}" \
