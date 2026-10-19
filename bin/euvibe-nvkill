@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Kill all of your processes that are using a GPU, e.g. sglang/vllm workers
+# left behind after a crash or an unclean `euvibe-qwen27b stop`.
+#
+# Lists the compute processes nvidia-smi reports, keeps those owned by you,
+# sends SIGTERM, waits up to $EUVIBE_NVKILL_TIMEOUT seconds (default 10) and
+# then sends SIGKILL to whatever is left.
+
+set -euo pipefail
+
+usage() {
+    cat <<EOF
+Usage:
+    euvibe-nvkill        kill your processes on the GPU(s), after confirming
+    euvibe-nvkill -y     kill without asking
+    euvibe-nvkill -n     only list them
+    euvibe-nvkill -h     show this message
+EOF
+}
+
+timeout=${EUVIBE_NVKILL_TIMEOUT:-10}
+dry_run=0
+yes=0
+case "${1:-}" in
+    -n) dry_run=1 ;;
+    -y) yes=1 ;;
+    -h|--help) usage; exit 0 ;;
+    "") ;;
+    *) usage >&2; exit 2 ;;
+esac
+
+command -v nvidia-smi >/dev/null || { echo "nvidia-smi not found in PATH" >&2; exit 1; }
+uid=$(id -u)
+
+# PIDs of your GPU compute processes, one per line (nvidia-smi lists a
+# process once per GPU it uses, hence sort -u)
+gpu_pids() {
+    local pid
+    nvidia-smi --query-compute-apps=pid --format=csv,noheader \
+        | tr -d ' ' | sort -un \
+        | while read -r pid; do
+              [[ -n "$pid" ]] || continue
+              [[ "$(ps -o uid= -p "$pid" 2>/dev/null | tr -d ' ')" == "$uid" ]] && echo "$pid"
+          done
+    return 0
+}
+
+mapfile -t pids < <(gpu_pids)
+
+if (( ${#pids[@]} == 0 )); then
+    echo "No processes of yours on the GPU"
+    exit 0
+fi
+
+echo "Your processes on the GPU:"
+ps -o pid,pgid,etime,args -p "$(IFS=,; echo "${pids[*]}")" | cut -c1-"${COLUMNS:-120}"
+nvidia-smi --query-compute-apps=pid,gpu_bus_id,used_memory --format=csv
+
+(( dry_run )) && exit 0
+
+if (( ! yes )); then
+    read -r -p "Kill these ${#pids[@]} processes? [y/N] " answer
+    [[ "$answer" == [yY]* ]] || { echo "Nothing killed"; exit 0; }
+fi
+
+echo "Sending SIGTERM"
+kill -TERM "${pids[@]}" 2>/dev/null || true
+
+for ((i = 0; i < timeout; i++)); do
+    mapfile -t pids < <(gpu_pids)
+    (( ${#pids[@]} == 0 )) && break
+    sleep 1
+done
+
+if (( ${#pids[@]} > 0 )); then
+    echo "Still running after ${timeout}s, sending SIGKILL to: ${pids[*]}"
+    kill -KILL "${pids[@]}" 2>/dev/null || true
+    sleep 2
+    mapfile -t pids < <(gpu_pids)
+fi
+
+if (( ${#pids[@]} > 0 )); then
+    echo "Could not kill: ${pids[*]}" >&2
+    exit 1
+fi
+echo "GPU is free of your processes"
+nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv
