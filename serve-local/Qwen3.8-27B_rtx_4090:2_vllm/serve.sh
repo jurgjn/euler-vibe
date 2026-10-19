@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -x -e -u -o pipefail
 
+export EU_VIBE_DIR=/cluster/project/beltrao/jjaenes/euler-vibe
+export EU_VIBE_PORT=27183
+
 # Expected from the euler-vibe wrapper
 : "${EU_VIBE_DIR:?must be set (run via euler-vibe serve_local)}"
 : "${EU_VIBE_PORT:?must be set (run via euler-vibe serve_local)}"
 echo EU_VIBE_DIR is $EU_VIBE_DIR, EU_VIBE_PORT is $EU_VIBE_PORT
 
 # https://hub.docker.com/r/vllm/vllm-openai/tags
-#export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai_qwen38.sif
-export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai_v0.29.0-x86_64.sif
+export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai_v0.31.0-x86_64.sif
 
 # There are two secondary wins from FP8 on your hardware that matter almost as much as raw speed.
 # First, KV-cache headroom: 27 GB of freed VRAM across the node means you can actually sustain long contexts at 256K without starving the cache.
@@ -53,9 +55,6 @@ ARGS=(
     --enable-auto-tool-choice
     --tool-call-parser qwen3_coder
     --reasoning-parser qwen3
-    # Recipe uses 3; 2 wastes less compute on rejected drafts, benchmark both
-    --speculative-config.method mtp
-    --speculative-config.num_speculative_tokens 3
     --language-model-only
 
     # https://huggingface.co/Qwen/Qwen3.8-27B
@@ -68,9 +67,9 @@ ARGS=(
     --override-generation-config.repetition_penalty 1.0
 
     # Native max context (max_position_embeddings in config.json)
-    --max-model-len 262144
+    #--max-model-len 262144
     #--max-model-len 131072
-    #--max-model-len 65536
+    --max-model-len 65536
     #--override-generation-config.max_tokens 131072
 
     # Default is 0.9; the GPUs are dedicated to vllm, so give the rest to the KV cache
@@ -78,9 +77,7 @@ ARGS=(
     # Give the KV cache an explicit, smaller budget
     #--kv-cache-memory 12884901888
 
-    --max-num-seqs 4
-    # Larger prefill chunks speed up long agent prompts
-    --max-num-batched-tokens 16384
+    --max-num-seqs 2
 
     # Prefix caching is on by default (also for this hybrid model, with mamba_cache_mode=align);
     # hit rates climbed to 85%+ with agent sessions
