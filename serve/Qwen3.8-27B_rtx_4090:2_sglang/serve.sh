@@ -59,6 +59,11 @@ ARGS=(
     # 4 PCIe 4090s: custom allreduce is unsupported anyway; silences the warning
     --disable-custom-all-reduce
 
+    # Qwen3.8 is served as a VLM: the tokenizer process otherwise preprocesses
+    # images on GPU 0, next to TP0's ~22 GiB, and in long sessions (pi resends
+    # every image each turn) fails with CUDA OOM. Keep preprocessing on CPU.
+    --image-processor-backend pil
+
     # Explicit rather than relying on chat-template auto-detection
     --reasoning-parser qwen3
     --tool-call-parser qwen3_coder
