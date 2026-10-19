@@ -6,11 +6,11 @@ set -euo pipefail
 export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
 export EU_VIBE_PORT=${EU_VIBE_PORT:-27182}
 export EU_VIBE_LOCAL_PORT=27183
-export EU_VIBE_MODEL=${EU_VIBE_MODEL:-deepseek-ai/DeepSeek-V4-Flash-0731}
+export EU_VIBE_MODEL=${EU_VIBE_MODEL:-Qwen/Qwen3.8-27B-FP8}
 
 # Model setup used by serve_local/pi: a directory with serve.sh (starts vllm/llama)
 # and models.json (pi config); bare names are looked up in serve-local/
-export EU_VIBE_SERVE_LOCAL=${EU_VIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090:2_vllm}
+export EU_VIBE_SERVE_LOCAL=${EU_VIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090:2_sglang}
 export EU_API_KEY="no-api"
 
 # Extra singularity/apptainer args for the claude/pi containers, e.g. per-project
@@ -84,6 +84,7 @@ cmd_claude() {
         --cwd "$PWD" \
         --env TERM="${TERM:-xterm-256color}" \
         --env DISABLE_AUTOUPDATER=1 \
+        --env TMPDIR=/tmp \
         "${EU_VIBE_APPTAINER_ARGS_ARRAY[@]}" \
         "$CLAUDE_IMAGE" claude --dangerously-skip-permissions "$@" \
         \; set-option -w remain-on-exit on \
@@ -114,33 +115,56 @@ wait_for_model() {
     echo " ready after $((SECONDS - start))s"
 }
 
-cmd_pi() {
-    cmd_serve_local
+cmd_pi_llama() {
     PI_HOME=$EU_VIBE_DIR/home/pi-eu
     mkdir -p "$PI_HOME/.pi/agent"
-    sed "s/\${EU_VIBE_PORT}/$EU_VIBE_PORT/g" "$(serve_local_dir)/models.json" > "$PI_HOME/.pi/agent/models.json"
-    # Default to the first provider/model listed in models.json
-    local provider model
-    read -r provider model < <(python3 -c 'import json, sys
-name, cfg = next(iter(json.load(open(sys.argv[1]))["providers"].items()))
-print(name, cfg["models"][0]["id"])' "$PI_HOME/.pi/agent/models.json")
-    wait_for_model "$model"
+
     OVERLAY_DIR="$TMPDIR/euler-vibe.$$"
-    mkdir -p "$OVERLAY_DIR"/overlay "$OVERLAY_DIR"/tmp
-    tmux new-session -s "$(basename "$PWD")" -n pi singularity run \
+    mkdir -p "$OVERLAY_DIR"/overlay
+    mkdir -p "$OVERLAY_DIR"/tmp
+
+    #tmux new-session -s "$(basename "$PWD")" -n pi singularity run \
+    singularity run \
         --nv \
         --cleanenv \
         --containall \
-        --env EU_VIBE_URL="http://localhost:$EU_VIBE_PORT" \
-        --env EU_API_KEY="no-key" \
+        --env OPENAI_BASE_URL="http://localhost:$EU_VIBE_PORT/v1" \
+        --env OPENAI_API_KEY="no-key" \
+        --env EU_VIBE_MODEL="$EU_VIBE_MODEL" \
         --cwd "$PWD" \
-        --home "$PI_HOME:$HOME" \
         --overlay "$OVERLAY_DIR"/overlay \
         --bind "$OVERLAY_DIR"/tmp:/tmp \
         --bind "$PWD:$PWD" \
+        --home "$PI_HOME:$HOME" \
         "${EU_VIBE_APPTAINER_ARGS_ARRAY[@]}" \
         $EU_VIBE_DIR/images/pi-eu.sif \
-        --provider "$provider" --model "$model" "$@"
+        --provider sglang --model "$EU_VIBE_MODEL" "$@"
+}
+
+cmd_pi_sglang() {
+    PI_HOME=$EU_VIBE_DIR/home/pi-eu
+    mkdir -p "$PI_HOME/.pi/agent"
+
+    OVERLAY_DIR="$TMPDIR/euler-vibe.$$"
+    mkdir -p "$OVERLAY_DIR"/overlay
+    mkdir -p "$OVERLAY_DIR"/tmp
+
+    #tmux new-session -s "$(basename "$PWD")" -n pi singularity run \
+    singularity run \
+        --nv \
+        --cleanenv \
+        --containall \
+        --env OPENAI_BASE_URL="http://localhost:$EU_VIBE_PORT/v1" \
+        --env OPENAI_API_KEY="no-key" \
+        --env EU_VIBE_MODEL="$EU_VIBE_MODEL" \
+        --cwd "$PWD" \
+        --overlay "$OVERLAY_DIR"/overlay \
+        --bind "$OVERLAY_DIR"/tmp:/tmp \
+        --bind "$PWD:$PWD" \
+        --home "$PI_HOME:$HOME" \
+        "${EU_VIBE_APPTAINER_ARGS_ARRAY[@]}" \
+        $EU_VIBE_DIR/images/pi-eu.sif \
+        --provider sglang --model "$EU_VIBE_MODEL" "$@"
 }
 
 cmd_list() {
@@ -288,8 +312,11 @@ main() {
         claude)
             cmd_claude "$@"
             ;;
-        pi)
-            cmd_pi "$@"
+        pi_llama)
+            cmd_pi_llama "$@"
+            ;;
+        pi_sglang)
+            cmd_pi_sglang "$@"
             ;;
         activate)
             cmd_activate "$@"

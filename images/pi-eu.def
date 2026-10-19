@@ -45,11 +45,6 @@ From: vllm/vllm-openai:latest-cu130
     # https://github.com/earendil-works/pi/tree/main/packages/coding-agent#quick-start
     npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
-    # Bake pi's config dir into the image, independent of $HOME at runtime
-    #export PI_CODING_AGENT_DIR=/opt/pi-agent
-    #mkdir -p $PI_CODING_AGENT_DIR
-    #pi install git:github.com/jurgjn/pi-llama
-
 %test
     rg --version | head -1
     fd --version
@@ -60,12 +55,6 @@ From: vllm/vllm-openai:latest-cu130
 
 %runscript
     set -eu
-    #export PI_CODING_AGENT_DIR=/opt/pi-agent
-    export LLAMA_BASE_URL=$EU_VIBE_URL/v1
-    export LLAMA_API_KEY=$EU_API_KEY
-    echo LLAMA_API_KEY is $LLAMA_API_KEY
-    curl -s $EU_VIBE_URL/health
-    curl -s $EU_VIBE_URL/v1/models
     exec pi "$@"
 
 %labels
