@@ -42,6 +42,9 @@ Run euler-pi in the same directory to resume its pi window.
 
 Extra bind mounts for a project go in .euvibe/mounts (one src[:dst[:opts]]
 per line, # comments allowed); they apply when its pi window is created.
+If .euvibe/sandbox.sif exists, it is used instead of images/pi-eu.sif; its
+%runscript must start pi with the given args, as in images/pi-eu.def:
+    exec pi "\$@"
 EOF
 }
 
@@ -295,6 +298,13 @@ EOF
         done
     fi
 
+    # A project can bring its own image, e.g. pi-eu.sif plus extra packages
+    local image="$EUVIBE_DIR/images/pi-eu.sif"
+    if [[ -f "$PWD/.euvibe/sandbox.sif" ]]; then
+        image="$PWD/.euvibe/sandbox.sif"
+    fi
+    echo "Image: $image"
+
     export OVERLAY_DIR="${TMPDIR:-/tmp}/euler-vibe.$$"
     mkdir -p "$OVERLAY_DIR"/overlay
     mkdir -p "$OVERLAY_DIR"/tmp
@@ -315,7 +325,7 @@ EOF
         --bind "$OVERLAY_DIR"/tmp:/tmp \
         --home "$PWD:$PWD" \
         "${EUVIBE_MOUNT_ARGS[@]}" \
-        "$EUVIBE_DIR/images/pi-eu.sif" \
+        "$image" \
         --provider sglang --model "$EUVIBE_SERVED_MODEL_NAME" --thinking xhigh "$@"
 }
 

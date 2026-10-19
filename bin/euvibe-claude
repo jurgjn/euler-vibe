@@ -4,6 +4,8 @@
 #
 # EU_CLAUDE_APPTAINER_ARGS - extra bind mounts etc
 # .euvibe/mounts in $PWD - project-specific bind mounts, see read_project_mounts
+# .euvibe/sandbox.sif in $PWD - project-specific image used instead of
+#   images/claude-eu.sif; needs claude on PATH (run with singularity exec)
 # EU_CLAUDE_ARGS - extra args to claude
 # .euler-claude/claude-hpc used for CLAUDE_CONFIG_DIR such that every claude config is separate
 # .euler-claude/image.sif ?
@@ -77,6 +79,10 @@ read_project_mounts() {
 export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
 
 CLAUDE_IMAGE=$EU_VIBE_DIR/images/claude-eu.sif
+# A project can bring its own image, e.g. claude-eu.sif plus extra packages
+if [[ -f "$PWD/.euvibe/sandbox.sif" ]]; then
+    CLAUDE_IMAGE=$PWD/.euvibe/sandbox.sif
+fi
 CLAUDE_HOME=$EU_VIBE_DIR/home/claude-eu
 mkdir -p "$CLAUDE_HOME"
 chmod 700 "$CLAUDE_HOME"
