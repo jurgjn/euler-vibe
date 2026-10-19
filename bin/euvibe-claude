@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# euler-claude starts/resumes a claude code session sandboxed by apptainer
+# Shows last session id / command 
+#
+# EU_CLAUDE_APPTAINER_ARGS - extra bind mounts etc
+# EU_CLAUDE_ARGS - extra args to claude
+# .euler-claude/claude-hpc used for CLAUDE_CONFIG_DIR such that every claude config is separate
+# .euler-claude/image.sif ?
+# 
+# physically move the container def + build into a separate function to have it at the bottom of the script?
+# ~/.euler-claude/.credentials.json - used to skip authentication if possible
+
+set -euo pipefail
+
+# Used to infer locations of config/images/models
+export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
+
+CLAUDE_IMAGE=$EU_VIBE_DIR/images/claude-eu.sif
+CLAUDE_HOME=$EU_VIBE_DIR/home/claude-eu
+mkdir -p "$CLAUDE_HOME"
+chmod 700 "$CLAUDE_HOME"
+OVERLAY_DIR="$TMPDIR/euler-vibe-claude_overlay.$$"
+mkdir -p "$OVERLAY_DIR"/overlay "$OVERLAY_DIR"/tmp
+
+tmux new-session -s "$(basename "$PWD")" -n claude singularity exec \
+    --nv \
+    --contain \
+    --cleanenv \
+    --home "$CLAUDE_HOME:$HOME" \
+    --overlay "$OVERLAY_DIR"/overlay \
+    --bind "$OVERLAY_DIR"/tmp:/tmp \
+    --bind "$PWD:$PWD" \
+    "$@" \
+    --cwd "$PWD" \
+    --env TERM="${TERM:-xterm-256color}" \
+    --env DISABLE_AUTOUPDATER=1 \
+    --env TMPDIR=/tmp \
+    "$CLAUDE_IMAGE" claude --dangerously-skip-permissions
+
+#rm -rf "$OVERLAY_DIR"

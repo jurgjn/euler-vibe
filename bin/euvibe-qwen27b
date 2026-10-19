@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Used to infer locations of config/images/models
+export EUVIBE_DIR=$(dirname $(dirname $(realpath $0)))
+export EUVIBE_PORT=${EUVIBE_PORT:-27182}
+export EUVIBE_MODEL=${EUVIBE_MODEL:-Qwen/Qwen3.8-27B-FP8}
+#export EUVIBE_MODEL=${EUVIBE_MODEL:-bytkim/Qwen3.8-27B-pi-FP8}
+export EUVIBE_DRAFT=${EUVIBE_MODEL:-incoai/Qwen3.8-27B-DFlash2}
+
+export EUVIBE_SERVE=${EUVIBE_SERVE:-$EUVIBE_DIR/serve/Qwen3.8-27B_rtx_4090:2_sglang}
+# Default session name is the script's file name. tmux turns '.' and ':' into
+# '_' in session names, so do the same here or exact-match targets would miss.
+_script_name=${0##*/}
+export EUVIBE_TMUX_SESSION=${EUVIBE_TMUX_SESSION:-${_script_name//[.:]/_}}
+export EUVIBE_START_TIMEOUT=${EUVIBE_START_TIMEOUT:-900}   # seconds to wait for /health
+
+export OPENAI_BASE_URL="http://localhost:$EUVIBE_PORT/v1"
+export OPENAI_API_KEY="no-key"
+
+export EUVIBE_CONTEXT_LENGTH=${EUVIBE_CONTEXT_LENGTH:-262144}            # sglang --context-length
+export EUVIBE_PI_CONTEXT_WINDOW=${EUVIBE_PI_CONTEXT_WINDOW:-$((EUVIBE_CONTEXT_LENGTH * 7 / 8))}  # what pi is told
+
+usage() {
+    cat <<EOF
+Usage:
+    euler-pi [pi args]  run pi against the local server in window 'pi:<dir>' of
+                        tmux session '$EUVIBE_TMUX_SESSION' for the current
+                        directory; if that window already exists, switch to it
+                        instead (pi args are then ignored)
+    euler-pi start      start sglang in window 'serve' of tmux session '$EUVIBE_TMUX_SESSION'
+    euler-pi stop       stop the server and close its window
+    euler-pi help       show this message
+
+All windows live in one tmux session:   tmux attach -t $EUVIBE_TMUX_SESSION
+Switch windows with Ctrl-b w (or Ctrl-b n / Ctrl-b p); detach with Ctrl-b d.
+Run euler-pi in the same directory to resume its pi window.
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# tmux helpers
+#
+# Windows are identified by a window option @euvibe_key ("serve" or
+# "pi:<full path>") and addressed by their window id (@N). The visible window
+# name ("serve", "pi:<basename>") is only for display: names containing ':' or
+# '.' cannot be used reliably in tmux targets, and two directories can share a
+# basename.
+# ---------------------------------------------------------------------------
+
+session_exists() {
+    tmux has-session -t "=$EUVIBE_TMUX_SESSION" 2>/dev/null
+}
+
+# Print the id of the window whose @euvibe_key equals $1 (nothing if none).
+find_window() {
+    local key=$1 id k
+    session_exists || return 0
+    while IFS=$'\t' read -r id k; do
+        if [[ "$k" == "$key" ]]; then
+            echo "$id"
+            return 0
+        fi
+    done < <(tmux list-windows -t "=$EUVIBE_TMUX_SESSION" \
+                  -F $'#{window_id}\t#{@euvibe_key}' 2>/dev/null)
+    return 0
+}
+
+window_exists() {
+    [[ -n "$1" ]] && tmux display-message -p -t "$1" '#{window_id}' >/dev/null 2>&1
+}
+
+# True once the window's command has exited (kept around by remain-on-exit)
+pane_dead() {
+    [[ "$(tmux display-message -p -t "$1" '#{pane_dead}' 2>/dev/null)" == 1 ]]
+}
+
+# create_window <name> <key> [new-window options...] [command]
+# Creates the session if needed, otherwise adds a window to it. Prints the id.
+create_window() {
+    local name=$1 key=$2
+    shift 2
+    local wid
+    if session_exists; then
+        wid=$(tmux new-window -d -P -F '#{window_id}' \
+                  -t "=$EUVIBE_TMUX_SESSION:" -n "$name" "$@")
+    else
+        wid=$(tmux new-session -d -P -F '#{window_id}' \
+                  -s "$EUVIBE_TMUX_SESSION" -n "$name" "$@")
+    fi
+    tmux set-option -w -t "$wid" @euvibe_key "$key"
+    tmux set-option -w -t "$wid" automatic-rename off
+    tmux set-option -w -t "$wid" allow-rename off
+    echo "$wid"
+}
+
+attach_window() {
+    tmux select-window -t "$1"
+    if [[ -n "${TMUX:-}" ]]; then
+        # Already inside tmux: switch instead of nesting
+        tmux switch-client -t "=$EUVIBE_TMUX_SESSION"
+    else
+        tmux attach-session -t "=$EUVIBE_TMUX_SESSION"
+    fi
+}
+
+require_tmux() {
+    command -v tmux >/dev/null || { echo "tmux not found in PATH" >&2; exit 1; }
+}
+
+# ---------------------------------------------------------------------------
+# git identity
+# ---------------------------------------------------------------------------
+
+# host_git_ident <AUTHOR|COMMITTER>
+# Set GIT_<role>_NAME / GIT_<role>_EMAIL to the identity git on the host would
+# use in $PWD (env vars, repo config, global/XDG config, system config, in
+# git's own precedence). Leaves them empty if git can't determine one.
+# Needed because the container's $HOME is $PWD, so ~/.gitconfig is invisible.
+host_git_ident() {
+    local role=$1 ident name= email=
+    ident=$(git var "GIT_${role}_IDENT" 2>/dev/null) || ident=
+    if [[ -n "$ident" ]]; then
+        # Format: "Name <email> <timestamp> <tz>"
+        name=${ident%% <*}
+        email=${ident#*<}
+        email=${email%%>*}
+    fi
+    printf -v "GIT_${role}_NAME"  '%s' "$name"
+    printf -v "GIT_${role}_EMAIL" '%s' "$email"
+}
+
+# ---------------------------------------------------------------------------
+# pi
+# ---------------------------------------------------------------------------
+
+# Entry point for `euler-pi [args]`: create the per-directory window if
+# needed, then attach to it.
+cmd_pi() {
+    require_tmux
+
+    local key="pi:$PWD"
+    local name="pi:${PWD##*/}"
+    [[ "$name" == "pi:" ]] && name="pi:/"
+
+    local wid
+    wid=$(find_window "$key")
+
+    if [[ -n "$wid" ]]; then
+        if (( $# > 0 )); then
+            echo "Resumed existing window '$name'; ignored arguments: $*" >&2
+        fi
+    else
+        host_git_ident AUTHOR
+        host_git_ident COMMITTER
+
+        # Re-invoke this script inside tmux. Variables are passed explicitly
+        # because a tmux server that is already running would otherwise give
+        # the new window its own (possibly stale) environment.
+        local inner
+        inner=$(printf '%q ' "$(realpath "$0")" __pi "$@")
+        wid=$(create_window "$name" "$key" -c "$PWD" \
+                  -e PATH="$PATH" \
+                  -e TMPDIR="${TMPDIR:-/tmp}" \
+                  -e EUVIBE_PORT="$EUVIBE_PORT" \
+                  -e EUVIBE_MODEL="$EUVIBE_MODEL" \
+                  -e EUVIBE_SERVE="$EUVIBE_SERVE" \
+                  -e EUVIBE_TMUX_SESSION="$EUVIBE_TMUX_SESSION" \
+                  -e EUVIBE_CONTEXT_LENGTH="$EUVIBE_CONTEXT_LENGTH" \
+                  -e EUVIBE_PI_CONTEXT_WINDOW="$EUVIBE_PI_CONTEXT_WINDOW" \
+                  -e GIT_AUTHOR_NAME="$GIT_AUTHOR_NAME" \
+                  -e GIT_AUTHOR_EMAIL="$GIT_AUTHOR_EMAIL" \
+                  -e GIT_COMMITTER_NAME="$GIT_COMMITTER_NAME" \
+                  -e GIT_COMMITTER_EMAIL="$GIT_COMMITTER_EMAIL" \
+                  "$inner")
+    fi
+
+    attach_window "$wid"
+}
+
+# Runs inside the tmux window: render the config and start the container.
+cmd_pi_run() {
+    # On a clean exit the window closes, so the next euler-pi starts fresh.
+    # On any failure (pi itself, or an earlier set -e / set -u abort), keep
+    # the output visible until the user has read it.
+    trap 'rc=$?; if (( rc != 0 )); then
+              echo
+              echo "euler-pi window failed with status $rc. Press Enter to close this window."
+              read -r || true
+          fi' EXIT
+
+    # stripJsonComments is Pi’s own small helper in utils/json.ts, not the npm package. Its docstring says it strips // line comments and trailing commas from JSON, leaving string literals untouched.
+    export PI_CODING_AGENT_DIR="$PWD/.config/pi/agent"
+    mkdir -p "$PI_CODING_AGENT_DIR"
+    envsubst '
+      $OPENAI_BASE_URL
+      $OPENAI_API_KEY
+      $EUVIBE_PI_CONTEXT_WINDOW
+    ' < "$EUVIBE_SERVE/models.template.jsonc" \
+    > "$PI_CODING_AGENT_DIR/models.json"
+
+    settings="$PI_CODING_AGENT_DIR/settings.json"
+    if [[ ! -e "$settings" ]]; then
+        cat > "$settings" <<'EOF'
+{ "compaction": { "enabled": true, "reserveTokens": 49152, "keepRecentTokens": 20000 } }
+EOF
+    fi
+
+    echo "$PI_CODING_AGENT_DIR/models.json":
+    cat "$PI_CODING_AGENT_DIR/models.json"
+
+    export OVERLAY_DIR="${TMPDIR:-/tmp}/euler-vibe.$$"
+    mkdir -p "$OVERLAY_DIR"/overlay
+    mkdir -p "$OVERLAY_DIR"/tmp
+
+    singularity run \
+        --nv \
+        --cleanenv \
+        --containall \
+        --env EUVIBE_MODEL="$EUVIBE_MODEL" \
+        --env OPENAI_BASE_URL="$OPENAI_BASE_URL" \
+        --env OPENAI_API_KEY="$OPENAI_API_KEY" \
+        --env PI_CODING_AGENT_DIR="$PI_CODING_AGENT_DIR" \
+        --env GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-}" \
+        --env GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-}" \
+        --env GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-}" \
+        --env GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-}" \
+        --overlay "$OVERLAY_DIR"/overlay \
+        --bind "$OVERLAY_DIR"/tmp:/tmp \
+        --home "$PWD:$PWD" \
+        "$EUVIBE_DIR/images/pi-eu.sif" \
+        --provider sglang --model "$EUVIBE_MODEL" --thinking xhigh "$@"
+}
+
+# ---------------------------------------------------------------------------
+# sglang server
+# ---------------------------------------------------------------------------
+
+cmd_serve_start() {
+    require_tmux
+
+    local wid
+    wid=$(find_window serve)
+
+    if [[ -n "$wid" ]]; then
+        if pane_dead "$wid"; then
+            echo "Removing stale window 'serve' (server had exited)"
+            tmux kill-window -t "$wid"
+        else
+            echo "Server already running in window 'serve' of tmux session '$EUVIBE_TMUX_SESSION'"
+            return 0
+        fi
+    fi
+
+    local env=(
+        -e EUVIBE_DIR="$EUVIBE_DIR"
+        -e EUVIBE_PORT="$EUVIBE_PORT"
+        -e EUVIBE_MODEL="$EUVIBE_MODEL"
+        -e EUVIBE_SERVE="$EUVIBE_SERVE"
+        -e EUVIBE_CONTEXT_LENGTH="$EUVIBE_CONTEXT_LENGTH"
+        -e OPENAI_API_KEY="$OPENAI_API_KEY"
+    )
+
+    # Start with a plain shell, enable remain-on-exit, then swap in serve.sh,
+    # so even an instant crash leaves its output readable. The variables are
+    # given to respawn-pane too, since new-window -e only applies to the
+    # window's first process.
+    echo "Starting $EUVIBE_SERVE/serve.sh in window 'serve' of tmux session '$EUVIBE_TMUX_SESSION'"
+    wid=$(create_window serve serve "${env[@]}")
+    tmux set-option -w -t "$wid" remain-on-exit on
+    tmux respawn-pane -k -t "$wid" "${env[@]}" "$EUVIBE_SERVE/serve.sh"
+
+    echo -n "Waiting for http://localhost:$EUVIBE_PORT/health "
+    local deadline=$((SECONDS + EUVIBE_START_TIMEOUT))
+    until curl -sf -o /dev/null "http://localhost:$EUVIBE_PORT/health"; do
+        if ! window_exists "$wid"; then
+            echo; echo "tmux window 'serve' disappeared" >&2; exit 1
+        fi
+        if pane_dead "$wid"; then
+            echo
+            echo "serve.sh exited with status $(tmux display-message -p -t "$wid" '#{pane_dead_status}'). Last output:" >&2
+            tmux capture-pane -p -t "$wid" -S -40 >&2
+            exit 1
+        fi
+        if (( SECONDS >= deadline )); then
+            echo; echo "Timed out after ${EUVIBE_START_TIMEOUT}s. Check with: tmux attach -t $EUVIBE_TMUX_SESSION (window 'serve')" >&2
+            exit 1
+        fi
+        echo -n .
+        sleep 5
+    done
+    echo " ready"
+}
+
+cmd_serve_stop() {
+    local wid
+    wid=$(find_window serve)
+
+    if [[ -z "$wid" ]]; then
+        echo "No window 'serve' in tmux session '$EUVIBE_TMUX_SESSION'; nothing to stop"
+        return 0
+    fi
+
+    if ! pane_dead "$wid"; then
+        echo "Sending Ctrl-C to sglang..."
+        tmux send-keys -t "$wid" C-c
+
+        for ((i = 0; i < 30; i++)); do
+            pane_dead "$wid" && break
+            sleep 1
+        done
+
+        if ! pane_dead "$wid"; then
+            # The pane process is a session leader, so its PID is also the
+            # process group ID; this also reaches sglang's worker processes.
+            local pid
+            pid=$(tmux display-message -p -t "$wid" '#{pane_pid}')
+            echo "Still running after 30s, sending SIGTERM to process group $pid"
+            kill -TERM -- "-$pid" 2>/dev/null || true
+            sleep 5
+            pane_dead "$wid" || kill -KILL -- "-$pid" 2>/dev/null || true
+        fi
+    fi
+
+    # If this was the last window, tmux closes the session as well
+    tmux kill-window -t "$wid"
+    echo "Server stopped"
+}
+
+main() {
+    local cmd="${1:-}"
+
+    if [[ $# -gt 0 ]]; then
+        shift
+    fi
+
+    case "$cmd" in
+        start)
+            cmd_serve_start "$@"
+            ;;
+        stop)
+            cmd_serve_stop "$@"
+            ;;
+        help)
+            usage
+            ;;
+        __pi)
+            # Internal: invoked inside the pi tmux window
+            cmd_pi_run "$@"
+            ;;
+        "")
+            cmd_pi
+            ;;
+        *)
+            # Anything else is passed through to pi
+            cmd_pi "$cmd" "$@"
+            ;;
+    esac
+}
+
+main "$@"
