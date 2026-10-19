@@ -9,7 +9,7 @@ export EU_VIBE_LOCAL_PORT=27183
 export EU_VIBE_MODEL=${EU_VIBE_MODEL:-Qwen/Qwen3.8-27B-FP8}
 
 # Model setup used by serve_local/pi: a directory with serve.sh (starts vllm/llama)
-# and models.json (pi config); bare names are looked up in serve-local/
+# and models.json (pi config); bare names are looked up in serve/
 export EU_VIBE_SERVE_LOCAL=${EU_VIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090:2_sglang}
 export EU_API_KEY="no-api"
 
@@ -42,7 +42,7 @@ Models & serving:
     serve [sbatch-args...]
                     Submit a Slurm job serving \$EU_VIBE_MODEL
     serve_local     Run serve.sh from \$EU_VIBE_SERVE_LOCAL in tmux session 'serve_local'
-                    (default $EU_VIBE_SERVE_LOCAL; available: $(cd "$EU_VIBE_DIR/serve-local" && ls -d */ | tr -d / | tr '\n' ' '))
+                    (default $EU_VIBE_SERVE_LOCAL; available: $(cd "$EU_VIBE_DIR/serve" && ls -d */ | tr -d / | tr '\n' ' '))
                     (output also saved to logs/serve_local-<date>-<time>.log)
     status          Show serve jobs, SSH tunnel and API settings
     scancel         Cancel the serve job
@@ -190,12 +190,12 @@ new_log() {
 cmd_serve() {
     export EULER_VIBE_LOGS=$(new_log serve)
     echo "Log: $EULER_VIBE_LOGS"
-    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve-sbatch/dsv4-flash_pro_6000.sbatch
+    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve-dev/dsv4-flash_pro_6000.sbatch
 }
 
 serve_local_dir() {
     local dir=$EU_VIBE_SERVE_LOCAL
-    [[ $dir == */* ]] || dir=$EU_VIBE_DIR/serve-local/$dir
+    [[ $dir == */* ]] || dir=$EU_VIBE_DIR/serve/$dir
     [[ -f $dir/serve.sh && -f $dir/models.json ]] || {
         echo "Error: $dir must contain serve.sh and models.json" >&2
         exit 1
