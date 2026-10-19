@@ -123,8 +123,9 @@ cmd_sync() {
 
     echo "Syncing $EU_VIBE_PAPERPILE_REMOTE -> $dir/pdfs"
     "$rclone" sync "$EU_VIBE_PAPERPILE_REMOTE" "$dir/pdfs" \
-        --exclude "/Trashed Papers/**" --exclude "/Starred Papers/**" \
-        --include "*.{pdf,PDF,bib}" --drive-skip-gdocs --fast-list \
+        --filter "- /Trashed Papers/**" --filter "- /Starred Papers/**" \
+        --filter "+ *.{pdf,PDF,bib}" --filter "- *" \
+        --drive-skip-gdocs --drive-acknowledge-abuse --fast-list \
         --transfers 8 --stats 30s --stats-one-line -v 2>&1 | grep -v ': Copied (new)$' || true
 
     if [[ $EU_VIBE_PAPERPILE_BIB_URL =~ ^https://(docs|drive)\.google\.com/.*/d/([^/?]+) ]]; then

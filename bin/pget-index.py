@@ -63,18 +63,25 @@ def update_text_cache(root, pdfs):
 
 
 def pdf_title(pdf):
-    # Paperpile names files "Author Year - Title.pdf" (long titles truncated)
+    # Paperpile names files "Author Year - Title.pdf", shortening long titles
+    # to "Start ... End" (or "Start... End", "Start [...]"); returns the
+    # normalised start and end (empty if not shortened)
     stem = pdf.stem
-    return stem.split(" - ", 1)[1] if " - " in stem else stem
+    m = re.match(r".*?\b(?:1[89]|20)\d\d[a-z]? - (.+)", stem)
+    title = m.group(1) if m else stem.split(" - ", 1)[-1]
+    head, _, tail = (re.split(r"(\[\.\.\.\]|\.\.\.|…)", title, maxsplit=1) + ["", ""])[:3]
+    return norm(head), norm(tail)
 
 
 def match_pdfs(entries, pdfs):
     by_name = {p.name.lower(): p for p in pdfs}
-    by_key = {}
+    by_key, by_title = {}, {}
     for p in pdfs:
-        key = norm(pdf_title(p))
-        if len(key) >= KEY_LEN:
-            by_key.setdefault(key[:KEY_LEN], []).append((key, p))
+        head, tail = pdf_title(p)
+        if not tail:
+            by_title.setdefault(head, []).append(p)
+        if len(head) >= KEY_LEN:
+            by_key.setdefault(head[:KEY_LEN], []).append((head, tail, p))
     matched = {}
     for e in entries:
         found = []
@@ -83,13 +90,38 @@ def match_pdfs(entries, pdfs):
             p = by_name.get(Path(name.strip()).name.lower())
             if p:
                 found.append(p)
-        if not found:
-            title = norm(clean(e.get("title", "")))
-            for key, p in by_key.get(title[:KEY_LEN], []):
-                if title.startswith(key) or key.startswith(title):
+        title = norm(clean(e.get("title", "")))
+        if not found and title:
+            # Exact title match (also catches short titles), else prefix/suffix
+            found = list(by_title.get(title, []))
+            for head, tail, p in by_key.get(title[:KEY_LEN], []):
+                if tail:
+                    if title.startswith(head) and title.endswith(tail):
+                        found.append(p)
+                elif title.startswith(head) or head.startswith(title):
                     found.append(p)
-        matched[e["ID"]] = sorted(set(found))
+        matched[e["ID"]] = best_by_author_year(e, sorted(set(found)))
     return matched
+
+
+def best_by_author_year(e, found):
+    """Titles can repeat (preprint vs published, or one title a prefix of another):
+    keep the PDFs whose "Author Year" file name prefix fits the entry best."""
+    if not found:
+        return found
+    author = norm(clean(e.get("author", "")).split(" and ")[0].split(",")[0])
+    year = clean(e.get("year"))
+
+    def score(p):
+        prefix = p.stem.split(" - ", 1)[0]
+        return (bool(author) and author in norm(prefix)) + (bool(year) and year in prefix)
+
+    scores = {p: score(p) for p in found}
+    best = max(scores.values())
+    # Nothing in common with the file name: not the same paper
+    if best == 0 and author and year:
+        return []
+    return [p for p in found if scores[p] == best]
 
 
 def main(root):
