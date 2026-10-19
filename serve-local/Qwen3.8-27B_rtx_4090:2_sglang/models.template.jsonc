@@ -1,0 +1,66 @@
+{
+  // Use https://huggingface.co/Qwen/Qwen3.8-27B-FP8 running on localhost served by sglang
+  // pi --provider sglang --model "Qwen/Qwen3.8-27B-FP8"
+  // sglang needs --tool-call-parser qwen3_coder --reasoning-parser qwen3
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "sglang": {
+      "baseUrl": "$OPENAI_BASE_URL",
+      "api": "openai-completions",
+      "apiKey": "$OPENAI_API_KEY",
+      "models": [
+        {
+          "id": "Qwen/Qwen3.8-27B-FP8",
+          "name": "Qwen/Qwen3.8-27B-FP8",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": null,
+            "xhigh": "xhigh",
+            "max": null
+          },
+          "contextWindow": $EUVIBE_PI_CONTEXT_WINDOW,
+          "maxTokens": 32768, // Most providers set the output limit to about an eighth of the context window - https://pi.dev/models?name=qwen3.8-27
+          "samplingParams": {
+            "temperature": 1,
+            "top_p": 0.95,
+            "top_k": 20,
+            "min_p": 0,
+            "presence_penalty": 0,
+            "repetition_penalty": 1
+          },
+          "samplingParamsByThinkingLevel": {
+            "off": {
+              "temperature": 0.7,
+              "top_p": 0.8,
+              "presence_penalty": 1.5
+            }
+          },
+          "compat": {
+            "thinkingFormat": "chat-template",
+            "chatTemplateKwargs": {
+              "enable_thinking": {
+                "$var": "thinking.enabled"
+              },
+              "reasoning_effort": {
+                "$var": "thinking.effort",
+                "omitWhenOff": true
+              },
+              "preserve_thinking": true
+            },
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsLongCacheRetention": false
+          }
+        }
+      ]
+    }
+  }
+}
