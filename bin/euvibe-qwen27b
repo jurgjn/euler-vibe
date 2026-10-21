@@ -42,8 +42,9 @@ Run euler-pi in the same directory to resume its pi window.
 
 Extra bind mounts for a project go in .euvibe/mounts (one src[:dst[:opts]]
 per line, # comments allowed); they apply when its pi window is created.
-If .euvibe/sandbox.sif exists, it is used instead of images/pi-eu.sif; its
-%runscript must start pi with the given args, as in images/pi-eu.def:
+If .euvibe/<script name>.sif exists (e.g. euvibe-qwen27b.sif), it is used
+instead of images/pi-eu.sif; its %runscript must start pi with the given
+args, as in images/pi-eu.def:
     exec pi "\$@"
 EOF
 }
@@ -299,9 +300,11 @@ EOF
     fi
 
     # A project can bring its own image, e.g. pi-eu.sif plus extra packages
-    local image="$EUVIBE_DIR/images/pi-eu.sif"
-    if [[ -f "$PWD/.euvibe/sandbox.sif" ]]; then
-        image="$PWD/.euvibe/sandbox.sif"
+    local script_name image
+    script_name=$(basename "$(realpath "$0")")
+    image="$EUVIBE_DIR/images/pi-eu.sif"
+    if [[ -f "$PWD/.euvibe/$script_name.sif" ]]; then
+        image="$PWD/.euvibe/$script_name.sif"
     fi
     echo "Image: $image"
 
