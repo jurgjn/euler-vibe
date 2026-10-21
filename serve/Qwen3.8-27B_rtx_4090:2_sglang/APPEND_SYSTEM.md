@@ -42,3 +42,7 @@ Prefer `git commit --trailer "Co-authored-by: <resolved value>"` (git 2.32+). On
 - Do not add the trailer to commits that contain only the user's own changes.
 - Do not amend, rebase, or rewrite existing commits just to add the trailer.
 - If the user asks you to omit the trailer or use a different one, do what they ask.
+
+## User-facing documentation
+
+Do not modify user-facing documentation (e.g. README.md) unless specifically asked to do so. Make changes to code, config, or internal files as needed, but leave documentation untouched unless the user explicitly requests documentation updates.
