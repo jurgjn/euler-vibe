@@ -2,18 +2,34 @@
 
 set -euo pipefail
 
-NAME="${1:?usage: $0 <directory-under-PROJECT>}"
+NAME="${1:?usage: $0 <directory-under-/cluster/project/beltrao>}"
+NAME="${NAME%/}"   # tolerate a trailing slash from tab completion
+
+export SRC="/cluster/project/beltrao/$NAME"
+export DST="/cluster/work/beltrao/project2work/$NAME.squashfs"
+export OUT="/cluster/work/beltrao/project2work/$NAME.txt"
+
+[[ -d $SRC ]] || { echo "source directory not found: $SRC" >&2; exit 1; }
+
+# Create the image's and the log's directories (including any sub-directories
+# in NAME) before submitting: Slurm won't create the log's directory, and the
+# job fails without a log if it is missing.
+mkdir -p -- "$(dirname -- "$DST")" "$(dirname -- "$OUT")"
 
 time sbatch --wait \
-  --export=ALL,NAME="$NAME" \
-  --output="$WORK/$NAME.txt" \
+  --export=ALL \
+  --output="$OUT" \
   << 'EOF'
 #!/bin/bash
 #SBATCH --job-name=project2work
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem-per-cpu=16G
+#SBATCH --cpus-per-task=96
+#SBATCH --mem-per-cpu=2G
 #SBATCH --time=04:00:00
+
+set -euo pipefail
+
+log() { printf '%(%F %T)T  %s\n' -1 "$*"; }
 
 # Already-compressed files: stored as-is instead of recompressed
 precompressed='name(*.gz) || name(*.zip) || name(*.bam) || name(*.zst) || name(*.zstd)'
@@ -29,10 +45,26 @@ opts=(
   -force-dir-mode a=rx                # directories 0555
   -root-mode a=rx                     # top directory 0555 (default would be 0777)
   -action "uncompressed @ $precompressed"  # skip zstd on files matched above
-  -percentage                         # plain percentage instead of a progress bar (cleaner log)
+  -no-progress                        # no progress bar/percentages; the loop below reports instead
 )
 
-mksquashfs "$PROJECT/$NAME" "$WORK/$NAME.squashfs" "${opts[@]}"
+log "job $SLURM_JOB_ID on $(hostname), $SLURM_CPUS_PER_TASK CPUs"
+log "source: $SRC"
+log "source size: $(du -sh --apparent-size -- "$SRC" | cut -f1)"
+log "image:  $DST"
 
-myjobs -j $SLURM_JOB_ID
+# Every 3 min, log how large the image has grown so far
+(
+  while sleep 180; do
+    [[ -f $DST ]] && log "  ... image so far: $(du -h --apparent-size -- "$DST" | cut -f1)"
+  done
+) &
+reporter=$!
+trap 'kill "$reporter" 2>/dev/null || true' EXIT
+
+log "mksquashfs started"
+mksquashfs "$SRC" "$DST" "${opts[@]}"
+log "mksquashfs finished, image size: $(du -h --apparent-size -- "$DST" | cut -f1)"
+
+myjobs -j "$SLURM_JOB_ID"
 EOF
