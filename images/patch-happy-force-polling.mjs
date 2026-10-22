@@ -105,32 +105,6 @@ export class ApiSessionClient extends EventEmitter {`,
             autoConnect: false
         });`,
   },
-  {
-    file: "packages/happy-cli/src/codex/executionPolicy.ts",
-    before: `export function resolveCodexExecutionPolicy(
-    permissionMode: import('@/api/types').PermissionMode,
-    sandboxManagedByHappy: boolean,
-): { approvalPolicy: ApprovalPolicy; sandbox: SandboxMode } {
-    if (sandboxManagedByHappy) {
-        return {
-            approvalPolicy: 'never',
-            sandbox: 'danger-full-access',
-        };
-    }`,
-    after: `export function resolveCodexExecutionPolicy(
-    permissionMode: import('@/api/types').PermissionMode,
-    sandboxManagedByHappy: boolean,
-): { approvalPolicy: ApprovalPolicy; sandbox: SandboxMode } {
-    const forceDangerousCodexMode = process.env.HAPPY_CODEX_FORCE_FULL_ACCESS === '1'
-        || process.env.HAPPY_CODEX_FORCE_FULL_ACCESS === 'true';
-
-    if (sandboxManagedByHappy || forceDangerousCodexMode) {
-        return {
-            approvalPolicy: 'never',
-            sandbox: 'danger-full-access',
-        };
-    }`,
-  },
 ];
 
 for (const replacement of replacements) {
