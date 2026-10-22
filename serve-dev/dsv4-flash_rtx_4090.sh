@@ -10,25 +10,25 @@
 
 set -x -e -u -o pipefail
 
-export EU_VIBE_DIR=$(dirname $(dirname $(which euler-vibe)))
-export EU_VIBE_PORT=27182
+export EUVIBE_DIR=$(dirname $(dirname $(which euler-vibe)))
+export EUVIBE_PORT=27182
 
-# EU_VIBE_DIR expected from euler-vibe wrapper
-echo EU_VIBE_DIR is $EU_VIBE_DIR
+# EUVIBE_DIR expected from euler-vibe wrapper
+echo EUVIBE_DIR is $EUVIBE_DIR
 
 # Non-Unsloth DeepSeek-V4-Flash GGUFs were converted without these paths thus deviating from the official weights.
-export EU_VIBE_SIF=$EU_VIBE_DIR/images/llama.cpp_server-cuda13-b10298.sif
+export EUVIBE_SIF=$EUVIBE_DIR/images/llama.cpp_server-cuda13-b10298.sif
 
 # https://unsloth.ai/docs/models/deepseek-v4#quantization-analysis
 # Our UD-Q8_K_XL quant is fully lossless.
-#export EU_VIBE_MODEL=unsloth/DeepSeek-V4-Flash-0731-GGUF/UD-Q8_K_XL
-#export EU_VIBE_GGUF=$EU_VIBE_MODEL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf
+#export EUVIBE_MODEL=unsloth/DeepSeek-V4-Flash-0731-GGUF/UD-Q8_K_XL
+#export EUVIBE_GGUF=$EUVIBE_MODEL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf
 
 # UD-Q4_K_XL keeps the same bit-exact experts and only quantizes the non-expert tensors (4% of the model) to Q8_0, so it sits right next to Q8 in size and quality.
-#export EU_VIBE_MODEL=unsloth/DeepSeek-V4-Flash-0731-GGUF/UD-Q4_K_XL
-#export EU_VIBE_GGUF=$EU_VIBE_MODEL/DeepSeek-V4-Flash-0731-UD-Q4_K_XL-00001-of-00005.gguf
+#export EUVIBE_MODEL=unsloth/DeepSeek-V4-Flash-0731-GGUF/UD-Q4_K_XL
+#export EUVIBE_GGUF=$EUVIBE_MODEL/DeepSeek-V4-Flash-0731-UD-Q4_K_XL-00001-of-00005.gguf
 
-export EU_VIBE_MODEL=unsloth/DeepSeek-V4-Flash-0731-GGUF
+export EUVIBE_MODEL=unsloth/DeepSeek-V4-Flash-0731-GGUF
 
 #srun bash <<'EOF'
 export FROM="$(hostname) ${SLURM_NODEID}/${SLURM_NNODES}:"
@@ -59,17 +59,17 @@ ARGS=(
     --bind $TMPDIR/tmp:/tmp
     --overlay $TMPDIR/overlay
 
-    $EU_VIBE_SIF
+    $EUVIBE_SIF
     --api-key $API_KEY
     --threads 8
 
     # drop your --host flag since the image default does the same thing
-    --port $EU_VIBE_PORT
+    --port $EUVIBE_PORT
 
     # https://unsloth.ai/docs/models/deepseek-v4#dspark-speculative-decoding
     --alias DeepSeek-V4-Flash-0731
-    --model $EU_VIBE_MODEL/UD-Q3_K_XL/DeepSeek-V4-Flash-0731-UD-Q3_K_XL-00001-of-00004.gguf
-    --model-draft $EU_VIBE_MODEL/dspark-DeepSeek-V4-Flash-0731-Q8_0.gguf
+    --model $EUVIBE_MODEL/UD-Q3_K_XL/DeepSeek-V4-Flash-0731-UD-Q3_K_XL-00001-of-00004.gguf
+    --model-draft $EUVIBE_MODEL/dspark-DeepSeek-V4-Flash-0731-Q8_0.gguf
     --n-gpu-layers 99
     --n-gpu-layers-draft 99
     --spec-type draft-dspark
@@ -91,8 +91,8 @@ echo ${FROM} ARGS is "${ARGS[@]}"
 
 echo ${FROM} TMPDIR is $TMPDIR
 mkdir -p "$TMPDIR"/{home,models,overlay,tmp}
-export MODEL_SRC=$EU_VIBE_DIR/models/$EU_VIBE_MODEL
-export MODEL_DST=$TMPDIR/models/$EU_VIBE_MODEL
+export MODEL_SRC=$EUVIBE_DIR/models/$EUVIBE_MODEL
+export MODEL_DST=$TMPDIR/models/$EUVIBE_MODEL
 echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
     --include "UD-Q3_K_XL/**" \

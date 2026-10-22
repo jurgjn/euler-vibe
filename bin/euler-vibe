@@ -3,25 +3,25 @@
 set -euo pipefail
 
 # Used to infer locations of config/images/models
-export EU_VIBE_DIR=$(dirname $(dirname $(realpath $0)))
-export EU_VIBE_PORT=${EU_VIBE_PORT:-27182}
-export EU_VIBE_LOCAL_PORT=27183
-export EU_VIBE_MODEL=${EU_VIBE_MODEL:-Qwen/Qwen3.8-27B-FP8}
+export EUVIBE_DIR=$(dirname $(dirname $(realpath $0)))
+export EUVIBE_PORT=${EUVIBE_PORT:-27182}
+export EUVIBE_LOCAL_PORT=27183
+export EUVIBE_MODEL=${EUVIBE_MODEL:-Qwen/Qwen3.8-27B-FP8}
 
 # Model setup used by serve_local/pi: a directory with serve.sh (starts vllm/llama)
 # and models.json (pi config); bare names are looked up in serve/
-export EU_VIBE_SERVE_LOCAL=${EU_VIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090:2_sglang}
+export EUVIBE_SERVE_LOCAL=${EUVIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090:2_sglang}
 export EU_API_KEY="no-api"
 
 # Extra singularity/apptainer args for the claude/pi containers, e.g. per-project
-# read-only mounts: EU_VIBE_APPTAINER_ARGS="--bind /cluster/work/foo:/cluster/work/foo:ro"
+# read-only mounts: EUVIBE_APPTAINER_ARGS="--bind /cluster/work/foo:/cluster/work/foo:ro"
 # (split on whitespace, so paths containing spaces are not supported)
-read -ra EU_VIBE_APPTAINER_ARGS_ARRAY <<< "${EU_VIBE_APPTAINER_ARGS:-}"
+read -ra EUVIBE_APPTAINER_ARGS_ARRAY <<< "${EUVIBE_APPTAINER_ARGS:-}"
 
 # Paperpile library from bin/pget, mounted read-only into claude if present
-export EU_VIBE_PAPERPILE_DIR=${EU_VIBE_PAPERPILE_DIR:-$EU_VIBE_DIR/paperpile}
-if [[ -d $EU_VIBE_PAPERPILE_DIR ]]; then
-    EU_VIBE_APPTAINER_ARGS_ARRAY+=(--bind "$EU_VIBE_PAPERPILE_DIR:$EU_VIBE_PAPERPILE_DIR:ro")
+export EUVIBE_PAPERPILE_DIR=${EUVIBE_PAPERPILE_DIR:-$EUVIBE_DIR/paperpile}
+if [[ -d $EUVIBE_PAPERPILE_DIR ]]; then
+    EUVIBE_APPTAINER_ARGS_ARRAY+=(--bind "$EUVIBE_PAPERPILE_DIR:$EUVIBE_PAPERPILE_DIR:ro")
 fi
 
 usage() {
@@ -32,17 +32,17 @@ Usage:
 Coding agents (run in a tmux session named after the current directory):
     claude          Start Claude Code in a sandboxed container
     pi              Start pi against the local server (starts it if needed),
-                    using models.json from \$EU_VIBE_SERVE_LOCAL
-                    (both pass \$EU_VIBE_APPTAINER_ARGS to singularity, e.g.
-                    EU_VIBE_APPTAINER_ARGS="--bind /path/to/data:/path/to/data:ro")
+                    using models.json from \$EUVIBE_SERVE_LOCAL
+                    (both pass \$EUVIBE_APPTAINER_ARGS to singularity, e.g.
+                    EUVIBE_APPTAINER_ARGS="--bind /path/to/data:/path/to/data:ro")
 
 Models & serving:
     list            List downloaded models
     pull <repo>     Download a model from Hugging Face into models/
     serve [sbatch-args...]
-                    Submit a Slurm job serving \$EU_VIBE_MODEL
-    serve_local     Run serve.sh from \$EU_VIBE_SERVE_LOCAL in tmux session 'serve_local'
-                    (default $EU_VIBE_SERVE_LOCAL; available: $(cd "$EU_VIBE_DIR/serve" && ls -d */ | tr -d / | tr '\n' ' '))
+                    Submit a Slurm job serving \$EUVIBE_MODEL
+    serve_local     Run serve.sh from \$EUVIBE_SERVE_LOCAL in tmux session 'serve_local'
+                    (default $EUVIBE_SERVE_LOCAL; available: $(cd "$EUVIBE_DIR/serve" && ls -d */ | tr -d / | tr '\n' ' '))
                     (output also saved to logs/serve_local-<date>-<time>.log)
     status          Show serve jobs, SSH tunnel and API settings
     scancel         Cancel the serve job
@@ -66,8 +66,8 @@ EOF
 }
 
 cmd_claude() {
-    CLAUDE_IMAGE=$EU_VIBE_DIR/images/claude-eu.sif
-    CLAUDE_HOME=$EU_VIBE_DIR/home/claude-eu
+    CLAUDE_IMAGE=$EUVIBE_DIR/images/claude-eu.sif
+    CLAUDE_HOME=$EUVIBE_DIR/home/claude-eu
     mkdir -p "$CLAUDE_HOME"
     chmod 700 "$CLAUDE_HOME"
     OVERLAY_DIR="$TMPDIR/euler-vibe-claude_overlay.$$"
@@ -85,7 +85,7 @@ cmd_claude() {
         --env TERM="${TERM:-xterm-256color}" \
         --env DISABLE_AUTOUPDATER=1 \
         --env TMPDIR=/tmp \
-        "${EU_VIBE_APPTAINER_ARGS_ARRAY[@]}" \
+        "${EUVIBE_APPTAINER_ARGS_ARRAY[@]}" \
         "$CLAUDE_IMAGE" claude --dangerously-skip-permissions "$@" \
         \; set-option -w remain-on-exit on \
         \; set-hook pane-died "capture-pane -e -J ; save-buffer '$SCREEN_FILE' ; delete-buffer ; kill-session" \
@@ -101,8 +101,8 @@ cmd_claude() {
 # Wait until the local server lists the model (vllm takes minutes to boot)
 wait_for_model() {
     local model=$1 start=$SECONDS
-    echo -n "Waiting for $model on port $EU_VIBE_PORT"
-    until curl -sf -m 5 -H "Authorization: Bearer no-key" "http://localhost:$EU_VIBE_PORT/v1/models" \
+    echo -n "Waiting for $model on port $EUVIBE_PORT"
+    until curl -sf -m 5 -H "Authorization: Bearer no-key" "http://localhost:$EUVIBE_PORT/v1/models" \
             | grep -qF "\"$model\""; do
         if ! tmux has-session -t serve_local 2>/dev/null; then
             echo
@@ -116,7 +116,7 @@ wait_for_model() {
 }
 
 cmd_pi_llama() {
-    PI_HOME=$EU_VIBE_DIR/home/pi-eu
+    PI_HOME=$EUVIBE_DIR/home/pi-eu
     mkdir -p "$PI_HOME/.pi/agent"
 
     OVERLAY_DIR="$TMPDIR/euler-vibe.$$"
@@ -128,21 +128,21 @@ cmd_pi_llama() {
         --nv \
         --cleanenv \
         --containall \
-        --env OPENAI_BASE_URL="http://localhost:$EU_VIBE_PORT/v1" \
+        --env OPENAI_BASE_URL="http://localhost:$EUVIBE_PORT/v1" \
         --env OPENAI_API_KEY="no-key" \
-        --env EU_VIBE_MODEL="$EU_VIBE_MODEL" \
+        --env EUVIBE_MODEL="$EUVIBE_MODEL" \
         --cwd "$PWD" \
         --overlay "$OVERLAY_DIR"/overlay \
         --bind "$OVERLAY_DIR"/tmp:/tmp \
         --bind "$PWD:$PWD" \
         --home "$PI_HOME:$HOME" \
-        "${EU_VIBE_APPTAINER_ARGS_ARRAY[@]}" \
-        $EU_VIBE_DIR/images/pi-eu.sif \
-        --provider sglang --model "$EU_VIBE_MODEL" "$@"
+        "${EUVIBE_APPTAINER_ARGS_ARRAY[@]}" \
+        $EUVIBE_DIR/images/pi-eu.sif \
+        --provider sglang --model "$EUVIBE_MODEL" "$@"
 }
 
 cmd_pi_sglang() {
-    PI_HOME=$EU_VIBE_DIR/home/pi-eu
+    PI_HOME=$EUVIBE_DIR/home/pi-eu
     mkdir -p "$PI_HOME/.pi/agent"
 
     OVERLAY_DIR="$TMPDIR/euler-vibe.$$"
@@ -154,48 +154,48 @@ cmd_pi_sglang() {
         --nv \
         --cleanenv \
         --containall \
-        --env OPENAI_BASE_URL="http://localhost:$EU_VIBE_PORT/v1" \
+        --env OPENAI_BASE_URL="http://localhost:$EUVIBE_PORT/v1" \
         --env OPENAI_API_KEY="no-key" \
-        --env EU_VIBE_MODEL="$EU_VIBE_MODEL" \
+        --env EUVIBE_MODEL="$EUVIBE_MODEL" \
         --cwd "$PWD" \
         --overlay "$OVERLAY_DIR"/overlay \
         --bind "$OVERLAY_DIR"/tmp:/tmp \
         --bind "$PWD:$PWD" \
         --home "$PI_HOME:$HOME" \
-        "${EU_VIBE_APPTAINER_ARGS_ARRAY[@]}" \
-        $EU_VIBE_DIR/images/pi-eu.sif \
-        --provider sglang --model "$EU_VIBE_MODEL" "$@"
+        "${EUVIBE_APPTAINER_ARGS_ARRAY[@]}" \
+        $EUVIBE_DIR/images/pi-eu.sif \
+        --provider sglang --model "$EUVIBE_MODEL" "$@"
 }
 
 cmd_list() {
-    cd $EU_VIBE_DIR/models
+    cd $EUVIBE_DIR/models
     du -h -d 2 . | awk -F"/" 'NF==3'
 }
 
 cmd_pull() {
-    mkdir -p $EU_VIBE_DIR/models
+    mkdir -p $EUVIBE_DIR/models
     singularity run \
-        --cwd=$EU_VIBE_DIR/models \
-        --bind $EU_VIBE_DIR/models \
-        $EU_VIBE_DIR/images/git_latest.sif \
+        --cwd=$EUVIBE_DIR/models \
+        --bind $EUVIBE_DIR/models \
+        $EUVIBE_DIR/images/git_latest.sif \
         lfs clone https://huggingface.co/"$@" "$@"
 }
 
 # Timestamped log file for a serve run, e.g. logs/serve-20260924-171500.log
 new_log() {
-    mkdir -p "$EU_VIBE_DIR/logs"
-    echo "$EU_VIBE_DIR/logs/$1-$(date +%Y%m%d-%H%M%S).log"
+    mkdir -p "$EUVIBE_DIR/logs"
+    echo "$EUVIBE_DIR/logs/$1-$(date +%Y%m%d-%H%M%S).log"
 }
 
 cmd_serve() {
     export EULER_VIBE_LOGS=$(new_log serve)
     echo "Log: $EULER_VIBE_LOGS"
-    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EU_VIBE_DIR/serve-dev/dsv4-flash_pro_6000.sbatch
+    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EUVIBE_DIR/serve-dev/dsv4-flash_pro_6000.sbatch
 }
 
 serve_local_dir() {
-    local dir=$EU_VIBE_SERVE_LOCAL
-    [[ $dir == */* ]] || dir=$EU_VIBE_DIR/serve/$dir
+    local dir=$EUVIBE_SERVE_LOCAL
+    [[ $dir == */* ]] || dir=$EUVIBE_DIR/serve/$dir
     [[ -f $dir/serve.sh && -f $dir/models.json ]] || {
         echo "Error: $dir must contain serve.sh and models.json" >&2
         exit 1
@@ -208,16 +208,16 @@ cmd_serve_local() {
     dir=$(serve_local_dir)
     if ! tmux has-session -t serve_local 2>/dev/null; then
         # Killing the tmux session can leave the container running, still holding the port
-        if (exec 3<>/dev/tcp/127.0.0.1/$EU_VIBE_PORT) 2>/dev/null; then
-            echo "Error: port $EU_VIBE_PORT is in use but there is no serve_local session:" >&2
-            pgrep -af -- "(llama-server|vllm).*--port $EU_VIBE_PORT" >&2 || true
-            echo "Stop the stale server first, e.g.: pkill -f -- '(llama-server|vllm).*--port $EU_VIBE_PORT'" >&2
+        if (exec 3<>/dev/tcp/127.0.0.1/$EUVIBE_PORT) 2>/dev/null; then
+            echo "Error: port $EUVIBE_PORT is in use but there is no serve_local session:" >&2
+            pgrep -af -- "(llama-server|vllm).*--port $EUVIBE_PORT" >&2 || true
+            echo "Stop the stale server first, e.g.: pkill -f -- '(llama-server|vllm).*--port $EUVIBE_PORT'" >&2
             exit 1
         fi
         # tmux sessions inherit the server's environment, possibly from an older
         # Slurm job, so drop its Slurm/GPU vars and pass this job's explicitly;
         # tee keeps the full output, as the tmux scrollback is limited
-        local unset_vars=() set_vars=(EU_VIBE_DIR="$EU_VIBE_DIR" EU_VIBE_PORT="$EU_VIBE_PORT") v
+        local unset_vars=() set_vars=(EUVIBE_DIR="$EUVIBE_DIR" EUVIBE_PORT="$EUVIBE_PORT") v
         for v in $(tmux show-environment -g 2>/dev/null | sed -n 's/^\(SLURM_[A-Z0-9_]*\|CUDA_VISIBLE_DEVICES\)=.*/\1/p'); do
             unset_vars+=(-u "$v")
         done
@@ -228,10 +228,10 @@ cmd_serve_local() {
         tmux new-session -d -s serve_local "$(printf '%q ' env "${unset_vars[@]}" "${set_vars[@]}" \
             "$dir/serve.sh") 2>&1 | tee $(printf '%q' "$log")"
         # Record which setup is served, so pi doesn't pair it with another models.json
-        tmux set-environment -t serve_local EU_VIBE_SERVE_LOCAL_DIR "$dir"
+        tmux set-environment -t serve_local EUVIBE_SERVE_LOCAL_DIR "$dir"
         echo "Started session serve_local ($(basename "$dir")), log: $log"
     else
-        running=$(tmux show-environment -t serve_local EU_VIBE_SERVE_LOCAL_DIR 2>/dev/null | sed -n 's/^EU_VIBE_SERVE_LOCAL_DIR=//p')
+        running=$(tmux show-environment -t serve_local EUVIBE_SERVE_LOCAL_DIR 2>/dev/null | sed -n 's/^EUVIBE_SERVE_LOCAL_DIR=//p')
         if [[ $running != "$dir" ]]; then
             echo "Error: session serve_local is serving '${running:-unknown}', not '$dir'" >&2
             echo "Stop it first with: tmux kill-session -t serve_local" >&2
@@ -244,33 +244,33 @@ cmd_serve_local() {
 }
 
 cmd_scancel() {
-    EU_VIBE_SERVE_JOBID=$(squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk '$3 ~ /^euler-vibe/ {print $1}')
-    echo EU_VIBE_SERVE_JOBID is $EU_VIBE_SERVE_JOBID
-    scancel $EU_VIBE_SERVE_JOBID
+    EUVIBE_SERVE_JOBID=$(squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk '$3 ~ /^euler-vibe/ {print $1}')
+    echo EUVIBE_SERVE_JOBID is $EUVIBE_SERVE_JOBID
+    scancel $EUVIBE_SERVE_JOBID
 }
 
 cmd_status() {
     squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk 'NR==1 || $3 ~ /^euler-vibe/' | column -t --table-right 1,5,6
     echo
 
-    EU_VIBE_SERVE_JOBID=$(squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk '$3 ~ /^euler-vibe/ {print $1}')
-    export HEAD_NAME=$(scontrol show hostnames $(squeue -j $EU_VIBE_SERVE_JOBID -h -o "%N") | head -n 1)
+    EUVIBE_SERVE_JOBID=$(squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk '$3 ~ /^euler-vibe/ {print $1}')
+    export HEAD_NAME=$(scontrol show hostnames $(squeue -j $EUVIBE_SERVE_JOBID -h -o "%N") | head -n 1)
     export BASE_URL="http://$HEAD_NAME:8000/v1/chat/completions"
-    export EU_VIBE_LOCAL_PORT=27183
+    export EUVIBE_LOCAL_PORT=27183
     echo SSH tunnel:
-    echo ssh -N -L $EU_VIBE_LOCAL_PORT:$HEAD_NAME:$EU_VIBE_PORT euler.ethz.ch
+    echo ssh -N -L $EUVIBE_LOCAL_PORT:$HEAD_NAME:$EUVIBE_PORT euler.ethz.ch
     echo 
     echo OpenAI API:
-    echo export OPENAI_API_BASE="http://localhost:$EU_VIBE_LOCAL_PORT/v1"
+    echo export OPENAI_API_BASE="http://localhost:$EUVIBE_LOCAL_PORT/v1"
     echo export OPENAI_API_KEY=
     echo 
     echo Anthropic API:
-    echo export ANTHROPIC_BASE_URL="http://localhost:$EU_VIBE_LOCAL_PORT/"
+    echo export ANTHROPIC_BASE_URL="http://localhost:$EUVIBE_LOCAL_PORT/"
     echo export ANTHROPIC_API_KEY=
     echo export ANTHROPIC_AUTH_TOKEN=
-    echo export ANTHROPIC_DEFAULT_OPUS_MODEL=$EU_VIBE_MODEL
-    echo export ANTHROPIC_DEFAULT_SONNET_MODEL=$EU_VIBE_MODEL
-    echo export ANTHROPIC_DEFAULT_HAIKU_MODEL=$EU_VIBE_MODEL
+    echo export ANTHROPIC_DEFAULT_OPUS_MODEL=$EUVIBE_MODEL
+    echo export ANTHROPIC_DEFAULT_SONNET_MODEL=$EUVIBE_MODEL
+    echo export ANTHROPIC_DEFAULT_HAIKU_MODEL=$EUVIBE_MODEL
     echo
     #echo ssh -N -L 8000:$HEAD_NAME:8000 euler.ethz.ch
     # curl -s https://localhost:12345/v1/chat/completions -H "Content-Type: application/json" -d '{"model": "Qwen/Qwen3.6-27B", "messages": [{"role": "user", "content": "Write a haiku about protein-protein interactions"}]}' | jq .
@@ -284,21 +284,21 @@ cmd_status() {
 }
 
 cmd_activate() {
-    EU_VIBE_SERVE_JOBID=$(squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk '$3 ~ /^euler-vibe/ {print $1}')
-    export HEAD_NAME=$(scontrol show hostnames $(squeue -j $EU_VIBE_SERVE_JOBID -h -o "%N") | head -n 1)
-    echo export OPENAI_API_BASE="http://localhost:$EU_VIBE_LOCAL_PORT/v1"
+    EUVIBE_SERVE_JOBID=$(squeue --format="%.18i %.12P %.128j %.8T %.16M %.16l %40R" | awk '$3 ~ /^euler-vibe/ {print $1}')
+    export HEAD_NAME=$(scontrol show hostnames $(squeue -j $EUVIBE_SERVE_JOBID -h -o "%N") | head -n 1)
+    echo export OPENAI_API_BASE="http://localhost:$EUVIBE_LOCAL_PORT/v1"
     echo export OPENAI_API_KEY=
-    echo export ANTHROPIC_BASE_URL="http://localhost:$EU_VIBE_LOCAL_PORT/"
+    echo export ANTHROPIC_BASE_URL="http://localhost:$EUVIBE_LOCAL_PORT/"
     echo export ANTHROPIC_API_KEY=
     echo export ANTHROPIC_AUTH_TOKEN=
-    echo export ANTHROPIC_DEFAULT_OPUS_MODEL=$EU_VIBE_MODEL
-    echo export ANTHROPIC_DEFAULT_SONNET_MODEL=$EU_VIBE_MODEL
-    echo export ANTHROPIC_DEFAULT_HAIKU_MODEL=$EU_VIBE_MODEL
-    echo pgrep -f \"ssh -f -N -L $EU_VIBE_LOCAL_PORT:$HEAD_NAME:$EU_VIBE_PORT\" '>' /dev/null '||' ssh -f -N -L $EU_VIBE_LOCAL_PORT:$HEAD_NAME:$EU_VIBE_PORT euler.ethz.ch
+    echo export ANTHROPIC_DEFAULT_OPUS_MODEL=$EUVIBE_MODEL
+    echo export ANTHROPIC_DEFAULT_SONNET_MODEL=$EUVIBE_MODEL
+    echo export ANTHROPIC_DEFAULT_HAIKU_MODEL=$EUVIBE_MODEL
+    echo pgrep -f \"ssh -f -N -L $EUVIBE_LOCAL_PORT:$HEAD_NAME:$EUVIBE_PORT\" '>' /dev/null '||' ssh -f -N -L $EUVIBE_LOCAL_PORT:$HEAD_NAME:$EUVIBE_PORT euler.ethz.ch
 }
 
 cmd_deactivate() {
-    echo pkill -f \"ssh -f -N -L $EU_VIBE_LOCAL_PORT\"
+    echo pkill -f \"ssh -f -N -L $EUVIBE_LOCAL_PORT\"
 }
 
 main() {

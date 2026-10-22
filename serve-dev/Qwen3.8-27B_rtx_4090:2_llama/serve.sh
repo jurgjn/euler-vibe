@@ -2,17 +2,17 @@
 set -x -e -u -o pipefail
 
 # Expected from the euler-vibe wrapper
-: "${EU_VIBE_DIR:?must be set (run via euler-vibe serve_local)}"
-: "${EU_VIBE_PORT:?must be set (run via euler-vibe serve_local)}"
-echo EU_VIBE_DIR is $EU_VIBE_DIR, EU_VIBE_PORT is $EU_VIBE_PORT
+: "${EUVIBE_DIR:?must be set (run via euler-vibe serve_local)}"
+: "${EUVIBE_PORT:?must be set (run via euler-vibe serve_local)}"
+echo EUVIBE_DIR is $EUVIBE_DIR, EUVIBE_PORT is $EUVIBE_PORT
 
 # https://hub.docker.com/r/vllm/vllm-openai/tags
-#export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai_qwen38.sif
-export EU_VIBE_SIF=$EU_VIBE_DIR/images/llama.cpp_server-cuda13-b10298.sif
+#export EUVIBE_SIF=$EUVIBE_DIR/images/vllm-openai_qwen38.sif
+export EUVIBE_SIF=$EUVIBE_DIR/images/llama.cpp_server-cuda13-b10298.sif
 
 # There are two secondary wins from FP8 on your hardware that matter almost as much as raw speed.
 # First, KV-cache headroom: 27 GB of freed VRAM across the node means you can actually sustain long contexts at 256K without starving the cache.
-export EU_VIBE_MODEL=unsloth/Qwen3.8-27B-GGUF
+export EUVIBE_MODEL=unsloth/Qwen3.8-27B-GGUF
 
 #srun bash <<'EOF'
 export FROM="$(hostname) ${SLURM_NODEID}/${SLURM_NNODES}:"
@@ -41,15 +41,15 @@ ARGS=(
     --bind $TMPDIR/tmp:/tmp
     --overlay $TMPDIR/overlay
 
-    $EU_VIBE_SIF
+    $EUVIBE_SIF
     --threads 8
 
     # drop your --host flag since the image default does the same thing
-    --port $EU_VIBE_PORT
+    --port $EUVIBE_PORT
 
     #--alias Qwen3.8-27B-UD-Q6_K_XL
-    #--model $EU_VIBE_MODEL/Qwen3.8-27B-UD-Q6_K_XL.gguf
-    --models-dir $EU_VIBE_MODEL
+    #--model $EUVIBE_MODEL/Qwen3.8-27B-UD-Q6_K_XL.gguf
+    --models-dir $EUVIBE_MODEL
     --models-preset router-presets.ini
 
     # https://unsloth.ai/docs/models/qwen3.8#recommended-settings
@@ -71,8 +71,8 @@ echo ${FROM} ARGS is "${ARGS[@]}"
 
 echo ${FROM} TMPDIR is $TMPDIR
 mkdir -p "$TMPDIR"/{home,models,overlay,tmp}
-export MODEL_SRC=$EU_VIBE_DIR/models/$EU_VIBE_MODEL
-export MODEL_DST=$TMPDIR/models/$EU_VIBE_MODEL
+export MODEL_SRC=$EUVIBE_DIR/models/$EUVIBE_MODEL
+export MODEL_DST=$TMPDIR/models/$EUVIBE_MODEL
 echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
     --include "Qwen3.8-27B-UD-Q6_K_XL.gguf" \

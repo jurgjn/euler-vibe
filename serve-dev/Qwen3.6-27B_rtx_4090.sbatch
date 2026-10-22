@@ -11,12 +11,12 @@
 
 set -x -e -u -o pipefail
 
-export EU_VIBE_DIR=$(dirname $(dirname $(which euler-vibe)))
-export EU_VIBE_PORT=27182
+export EUVIBE_DIR=$(dirname $(dirname $(which euler-vibe)))
+export EUVIBE_PORT=27182
 
-# EU_VIBE_DIR expected from euler-vibe wrapper
-echo EU_VIBE_DIR is $EU_VIBE_DIR
-export EU_VIBE_MODEL=Qwen/Qwen3.6-27B-FP8
+# EUVIBE_DIR expected from euler-vibe wrapper
+echo EUVIBE_DIR is $EUVIBE_DIR
+export EUVIBE_MODEL=Qwen/Qwen3.6-27B-FP8
 
 srun bash <<'EOF'
 export FROM="$(hostname) ${SLURM_NODEID}/${SLURM_NNODES}:"
@@ -46,8 +46,8 @@ ARGS=(
     --bind $TMPDIR/tmp:/tmp
     --overlay $TMPDIR/overlay
 
-    $EU_VIBE_DIR/images/vllm-openai_v0.25.1-x86_64.sif
-    $EU_VIBE_MODEL
+    $EUVIBE_DIR/images/vllm-openai_v0.25.1-x86_64.sif
+    $EUVIBE_MODEL
 
     # https://recipes.vllm.ai/Qwen/Qwen3.6-27B
     --trust-remote-code
@@ -68,14 +68,14 @@ ARGS=(
 
     # Allow connections to vllm from other machines
     --host 0.0.0.0
-    --port $EU_VIBE_PORT
+    --port $EUVIBE_PORT
 )
 echo ${FROM} ARGS is "${ARGS[@]}"
 
 echo ${FROM} TMPDIR is $TMPDIR
 mkdir -p "$TMPDIR"/{home,models,overlay,tmp}
-export MODEL_SRC=$EU_VIBE_DIR/models/$EU_VIBE_MODEL
-export MODEL_DST=$TMPDIR/models/$EU_VIBE_MODEL
+export MODEL_SRC=$EUVIBE_DIR/models/$EUVIBE_MODEL
+export MODEL_DST=$TMPDIR/models/$EUVIBE_MODEL
 echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
     --exclude ".git/" \

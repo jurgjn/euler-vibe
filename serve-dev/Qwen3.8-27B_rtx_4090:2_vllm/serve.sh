@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 set -x -e -u -o pipefail
 
-export EU_VIBE_DIR=/cluster/project/beltrao/jjaenes/euler-vibe
-export EU_VIBE_PORT=27183
+export EUVIBE_DIR=/cluster/project/beltrao/jjaenes/euler-vibe
+export EUVIBE_PORT=27183
 
 # Expected from the euler-vibe wrapper
-: "${EU_VIBE_DIR:?must be set (run via euler-vibe serve_local)}"
-: "${EU_VIBE_PORT:?must be set (run via euler-vibe serve_local)}"
-echo EU_VIBE_DIR is $EU_VIBE_DIR, EU_VIBE_PORT is $EU_VIBE_PORT
+: "${EUVIBE_DIR:?must be set (run via euler-vibe serve_local)}"
+: "${EUVIBE_PORT:?must be set (run via euler-vibe serve_local)}"
+echo EUVIBE_DIR is $EUVIBE_DIR, EUVIBE_PORT is $EUVIBE_PORT
 
 # https://hub.docker.com/r/vllm/vllm-openai/tags
-export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm-openai_v0.31.0-x86_64.sif
+export EUVIBE_SIF=$EUVIBE_DIR/images/vllm-openai_v0.31.0-x86_64.sif
 
 # There are two secondary wins from FP8 on your hardware that matter almost as much as raw speed.
 # First, KV-cache headroom: 27 GB of freed VRAM across the node means you can actually sustain long contexts at 256K without starving the cache.
-export EU_VIBE_MODEL=Qwen/Qwen3.8-27B-FP8
+export EUVIBE_MODEL=Qwen/Qwen3.8-27B-FP8
 
 #srun bash <<'EOF'
 export FROM="$(hostname) ${SLURM_NODEID}/${SLURM_NNODES}:"
@@ -47,8 +47,8 @@ ARGS=(
     --bind $TMPDIR/tmp:/tmp
     --overlay $TMPDIR/overlay
 
-    $EU_VIBE_SIF
-    $EU_VIBE_MODEL
+    $EUVIBE_SIF
+    $EUVIBE_MODEL
 
     # https://recipes.vllm.ai/Qwen/Qwen3.8-27B-FP8
     --tensor-parallel-size ${SLURM_GPUS_ON_NODE:-$(nvidia-smi -L | wc -l)}
@@ -92,15 +92,15 @@ ARGS=(
 
     # Only reachable from this node (pi connects via localhost); key matches models.json
     --host 127.0.0.1
-    --port $EU_VIBE_PORT
+    --port $EUVIBE_PORT
     --api-key no-key
 )
 echo ${FROM} ARGS is "${ARGS[@]}"
 
 echo ${FROM} TMPDIR is $TMPDIR
 mkdir -p "$TMPDIR"/{home,models,overlay,tmp}
-export MODEL_SRC=$EU_VIBE_DIR/models/$EU_VIBE_MODEL
-export MODEL_DST=$TMPDIR/models/$EU_VIBE_MODEL
+export MODEL_SRC=$EUVIBE_DIR/models/$EUVIBE_MODEL
+export MODEL_DST=$TMPDIR/models/$EUVIBE_MODEL
 echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
     --exclude ".git/" \

@@ -14,13 +14,13 @@
 
 set -x -e -u -o pipefail
 
-# EU_VIBE_DIR expected from euler-vibe wrapper
-export EU_VIBE_SIF=$EU_VIBE_DIR/images/vllm_gilded-gnosis-v20-vllm966d57c-sibbbdccc-fi801d57a-cu132-20260803-r27.sif
-export EU_VIBE_MODEL=deepseek-ai/DeepSeek-V4-Flash-0731
-echo EU_VIBE_DIR is $EU_VIBE_DIR
-echo EU_VIBE_SIF is $EU_VIBE_SIF
-echo EU_VIBE_PORT is $EU_VIBE_PORT
-echo EU_VIBE_MODEL is $EU_VIBE_MODEL
+# EUVIBE_DIR expected from euler-vibe wrapper
+export EUVIBE_SIF=$EUVIBE_DIR/images/vllm_gilded-gnosis-v20-vllm966d57c-sibbbdccc-fi801d57a-cu132-20260803-r27.sif
+export EUVIBE_MODEL=deepseek-ai/DeepSeek-V4-Flash-0731
+echo EUVIBE_DIR is $EUVIBE_DIR
+echo EUVIBE_SIF is $EUVIBE_SIF
+echo EUVIBE_PORT is $EUVIBE_PORT
+echo EUVIBE_MODEL is $EUVIBE_MODEL
 
 export FROM="$(hostname) ${SLURM_NODEID}/${SLURM_NNODES}:"
 
@@ -57,7 +57,7 @@ ARGS=(
     --env MAX_NUM_SEQS=4
     --env MAX_MODEL_LEN=262144
     --env MAX_NUM_BATCHED_TOKENS=8192
-    --env PORT=$EU_VIBE_PORT
+    --env PORT=$EUVIBE_PORT
     --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES
     --env PYTHONHASHSEED=0
 
@@ -66,9 +66,9 @@ ARGS=(
     --bind $TMPDIR/models:/models:ro --cwd /models
     --bind $TMPDIR/tmp:/tmp
     --overlay $TMPDIR/overlay
-    --bind $EU_VIBE_DIR/cache:/cache
+    --bind $EUVIBE_DIR/cache:/cache
 
-    $EU_VIBE_SIF
+    $EUVIBE_SIF
 
     # https://github.com/local-inference-lab/vllm/blob/feat/gg-ds4-0731-launcher-20260731/serve-ds4-flash.sh
     /usr/local/bin/serve-ds4-flash.sh
@@ -78,8 +78,8 @@ echo ${FROM} ARGS is "${ARGS[@]}"
 
 echo ${FROM} TMPDIR is $TMPDIR
 mkdir -p "$TMPDIR"/{home,models,overlay,tmp}
-export MODEL_SRC=$EU_VIBE_DIR/models/$EU_VIBE_MODEL
-export MODEL_DST=$TMPDIR/models/$EU_VIBE_MODEL
+export MODEL_SRC=$EUVIBE_DIR/models/$EUVIBE_MODEL
+export MODEL_DST=$TMPDIR/models/$EUVIBE_MODEL
 echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
     --exclude ".git/" \
