@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# singularity-eu - run `singularity` in a clean environment using euler-tailored throwaway mounts
+# euler-sandbox - run `singularity` in a clean environment using euler-tailored throwaway mounts
 #
 
 set -euo pipefail
@@ -26,7 +26,9 @@ trap cleanup EXIT
 subcmd="$1"
 shift
 
-exec singularity "$subcmd" \
+# Not exec: the shell has to outlive singularity for the EXIT trap to remove
+# the overlay. The script's exit status is still singularity's.
+singularity "$subcmd" \
     --cleanenv \
     --containall \
     --home "$overlay_dir"/home \
