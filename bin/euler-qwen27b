@@ -28,21 +28,23 @@ export EUVIBE_PI_CONTEXT_WINDOW=${EUVIBE_PI_CONTEXT_WINDOW:-$((EUVIBE_CONTEXT_LE
 usage() {
     cat <<EOF
 Usage:
-    euler-pi [pi args]  run pi against the local server in window 'pi:<dir>' of
-                        tmux session '$EUVIBE_TMUX_SESSION' for the current
-                        directory; if that window already exists, switch to it
-                        instead (pi args are then ignored)
-    euler-pi start      start sglang in window 'serve' of tmux session '$EUVIBE_TMUX_SESSION'
-    euler-pi stop       stop the server and close its window
-    euler-pi help       show this message
+    euler-qwen27b [pi args]  run pi against the local server in window
+                             'pi:<dir>' of tmux session '$EUVIBE_TMUX_SESSION' for
+                             the current directory; if that window already
+                             exists, switch to it instead (pi args are then
+                             ignored)
+    euler-qwen27b start      start sglang in window 'serve' of tmux session
+                             '$EUVIBE_TMUX_SESSION'
+    euler-qwen27b stop       stop the server and close its window
+    euler-qwen27b help       show this message
 
 All windows live in one tmux session:   tmux attach -t $EUVIBE_TMUX_SESSION
 Switch windows with Ctrl-b w (or Ctrl-b n / Ctrl-b p); detach with Ctrl-b d.
-Run euler-pi in the same directory to resume its pi window.
+Run euler-qwen27b in the same directory to resume its pi window.
 
 Extra bind mounts for a project go in .euvibe/mounts (one src[:dst[:opts]]
 per line, # comments allowed); they apply when its pi window is created.
-If .euvibe/<script name>.sif exists (e.g. euvibe-qwen27b.sif), it is used
+If .euvibe/<script name>.sif exists (e.g. euler-qwen27b.sif), it is used
 instead of images/pi-eu.sif; its %runscript must start pi with the given
 args, as in images/pi-eu.def:
     exec pi "\$@"
@@ -209,7 +211,7 @@ read_project_mounts() {
 # pi
 # ---------------------------------------------------------------------------
 
-# Entry point for `euler-pi [args]`: create the per-directory window if
+# Entry point for `euler-qwen27b [args]`: create the per-directory window if
 # needed, then attach to it.
 cmd_pi() {
     require_tmux
@@ -256,12 +258,12 @@ cmd_pi() {
 
 # Runs inside the tmux window: render the config and start the container.
 cmd_pi_run() {
-    # On a clean exit the window closes, so the next euler-pi starts fresh.
+    # On a clean exit the window closes, so the next euler-qwen27b starts fresh.
     # On any failure (pi itself, or an earlier set -e / set -u abort), keep
     # the output visible until the user has read it.
     trap 'rc=$?; if (( rc != 0 )); then
               echo
-              echo "euler-pi window failed with status $rc. Press Enter to close this window."
+              echo "pi window failed with status $rc. Press Enter to close this window."
               read -r || true
           fi' EXIT
 
