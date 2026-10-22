@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+NAME="${1:?usage: $0 <directory-under-PROJECT>}"
+
+time sbatch --wait \
+  --export=ALL,NAME="$NAME" \
+  --output="$WORK/$NAME.txt" \
+  << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=project2work
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem-per-cpu=16G
+#SBATCH --time=04:00:00
+
+# Already-compressed files: stored as-is instead of recompressed
+precompressed='name(*.gz) || name(*.zip) || name(*.bam) || name(*.zst) || name(*.zstd)'
+
+opts=(
+  -comp zstd                          # zstd: much faster decompression than gzip/xz
+  -Xcompression-level 19              # highest non-"ultra" level; 20-22 cost far more for little gain
+  -b 1M                               # largest block size: better ratio
+  -processors "$SLURM_CPUS_PER_TASK"  # use exactly the CPUs Slurm allocated
+  -all-root                           # all files owned by root: no user/group IDs stored
+  -no-xattrs                          # no extended attributes (ACLs, SELinux labels)
+  -force-file-mode a=rX               # files 0444, or 0555 if executable in the source
+  -force-dir-mode a=rx                # directories 0555
+  -root-mode a=rx                     # top directory 0555 (default would be 0777)
+  -action "uncompressed @ $precompressed"  # skip zstd on files matched above
+  -percentage                         # plain percentage instead of a progress bar (cleaner log)
+)
+
+mksquashfs "$PROJECT/$NAME" "$WORK/$NAME.squashfs" "${opts[@]}"
+
+myjobs -j $SLURM_JOB_ID
+EOF
