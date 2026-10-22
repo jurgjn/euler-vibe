@@ -28,3 +28,6 @@ cache/
 
 # Snakemake state from building images
 images/.snakemake-eu/
+
+# NFS placeholders for files deleted while still open
+.nfs*
