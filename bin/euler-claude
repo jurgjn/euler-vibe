@@ -6,11 +6,10 @@
 #
 # - Home is home/euler-claude in this repo (persists login/config across runs);
 #   only $PWD and the extra mounts below are visible from the host
-# - .euvibe/mounts in $PWD - project-specific bind mounts, see
+# - .euler-vibe/mounts in $PWD - project-specific bind mounts, see
 #   read_project_mounts
-# - .euvibe/<script name>.sif in $PWD (e.g. euler-claude.sif) - project-specific
-#   image used instead of images/claude-eu.sif; needs claude on PATH (run with
-#   singularity exec)
+# - .euler-vibe/euler-claude.sif in $PWD - project-specific image used instead
+#   of images/claude-eu.sif; needs claude on PATH (run with singularity exec)
 # - Arguments are passed to singularity exec, e.g. --bind /some/dir
 #
 # TODO:
@@ -21,9 +20,9 @@
 
 set -euo pipefail
 
-# Read extra bind mounts for this project from .euvibe/mounts in the current
-# directory into the array EUVIBE_MOUNT_ARGS (as --bind <spec> pairs). One
-# mount per line in singularity's --bind format, src[:dst[:opts]], e.g.
+# Read extra bind mounts for this project from .euler-vibe/mounts in the
+# current directory into the array EUVIBE_MOUNT_ARGS (as --bind <spec> pairs).
+# One mount per line in singularity's --bind format, src[:dst[:opts]], e.g.
 #     /cluster/work/beltrao/jjaenes/data           # same path inside
 #     ~/scratch:/scratch:ro
 #     $WORK/26.06_pstQTL::ro                       # empty dst: same path, ro
@@ -36,7 +35,7 @@ set -euo pipefail
 # is fine. Any other src must exist, rather than letting singularity abort.
 read_project_mounts() {
     EUVIBE_MOUNT_ARGS=()
-    local file="$PWD/.euvibe/mounts" line out name src dst opts m
+    local file="$PWD/.euler-vibe/mounts" line out name src dst opts m
     local var_re='\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)'
     local -a matches
     [[ -f "$file" ]] || return 0
@@ -126,8 +125,8 @@ fi
 
 CLAUDE_IMAGE=$EUVIBE_DIR/images/claude-eu.sif
 # A project can bring its own image, e.g. claude-eu.sif plus extra packages
-if [[ -f "$PWD/.euvibe/$SCRIPT_NAME.sif" ]]; then
-    CLAUDE_IMAGE=$PWD/.euvibe/$SCRIPT_NAME.sif
+if [[ -f "$PWD/.euler-vibe/euler-claude.sif" ]]; then
+    CLAUDE_IMAGE=$PWD/.euler-vibe/euler-claude.sif
 fi
 CLAUDE_HOME=$EUVIBE_DIR/home/euler-claude
 mkdir -p "$CLAUDE_HOME"
@@ -166,5 +165,3 @@ tmux set-option -w -t "$wid" @euvibe_key "$WINDOW_KEY"
 tmux set-option -w -t "$wid" automatic-rename off
 tmux set-option -w -t "$wid" allow-rename off
 attach "$wid"
-
-#rm -rf "$OVERLAY_DIR"

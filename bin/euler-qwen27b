@@ -42,11 +42,11 @@ All windows live in one tmux session:   tmux attach -t $EUVIBE_TMUX_SESSION
 Switch windows with Ctrl-b w (or Ctrl-b n / Ctrl-b p); detach with Ctrl-b d.
 Run euler-qwen27b in the same directory to resume its pi window.
 
-Extra bind mounts for a project go in .euvibe/mounts (one src[:dst[:opts]]
-per line, # comments allowed); they apply when its pi window is created.
-If .euvibe/<script name>.sif exists (e.g. euler-qwen27b.sif), it is used
-instead of images/pi-eu.sif; its %runscript must start pi with the given
-args, as in images/pi-eu.def:
+Extra bind mounts for a project go in .euler-vibe/mounts (one
+src[:dst[:opts]] per line, # comments allowed); they apply when its pi window
+is created. If .euler-vibe/euler-qwen27b.sif exists, it is used instead of
+images/pi-eu.sif; its %runscript must start pi with the given args, as in
+images/pi-eu.def:
     exec pi "\$@"
 EOF
 }
@@ -147,9 +147,9 @@ host_git_ident() {
 # project-specific mounts
 # ---------------------------------------------------------------------------
 
-# Read extra bind mounts for this project from .euvibe/mounts in the current
-# directory into the array EUVIBE_MOUNT_ARGS (as --bind <spec> pairs). One
-# mount per line in singularity's --bind format, src[:dst[:opts]], e.g.
+# Read extra bind mounts for this project from .euler-vibe/mounts in the
+# current directory into the array EUVIBE_MOUNT_ARGS (as --bind <spec> pairs).
+# One mount per line in singularity's --bind format, src[:dst[:opts]], e.g.
 #     /cluster/work/beltrao/jjaenes/data           # same path inside
 #     ~/scratch:/scratch:ro
 #     $WORK/26.06_pstQTL::ro                       # empty dst: same path, ro
@@ -162,7 +162,7 @@ host_git_ident() {
 # is fine. Any other src must exist, rather than letting singularity abort.
 read_project_mounts() {
     EUVIBE_MOUNT_ARGS=()
-    local file="$PWD/.euvibe/mounts" line out name src dst opts m
+    local file="$PWD/.euler-vibe/mounts" line out name src dst opts m
     local var_re='\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)'
     local -a matches
     [[ -f "$file" ]] || return 0
@@ -295,18 +295,16 @@ EOF
 
     read_project_mounts
     if (( ${#EUVIBE_MOUNT_ARGS[@]} > 0 )); then
-        echo "Extra mounts from .euvibe/mounts:"
+        echo "Extra mounts from .euler-vibe/mounts:"
         for ((i = 1; i < ${#EUVIBE_MOUNT_ARGS[@]}; i += 2)); do
             echo "    ${EUVIBE_MOUNT_ARGS[i]}"
         done
     fi
 
     # A project can bring its own image, e.g. pi-eu.sif plus extra packages
-    local script_name image
-    script_name=$(basename "$(realpath "$0")")
-    image="$EUVIBE_DIR/images/pi-eu.sif"
-    if [[ -f "$PWD/.euvibe/$script_name.sif" ]]; then
-        image="$PWD/.euvibe/$script_name.sif"
+    local image="$EUVIBE_DIR/images/pi-eu.sif"
+    if [[ -f "$PWD/.euler-vibe/euler-qwen27b.sif" ]]; then
+        image="$PWD/.euler-vibe/euler-qwen27b.sif"
     fi
     echo "Image: $image"
 
