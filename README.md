@@ -21,7 +21,7 @@ claude-mobile happy      # start a Happy-controlled Claude session
 
 Other subcommands: `claude`/`raw` (Claude directly), `shell` (plain container shell), `logs`, `doctor`, `netcheck`, `nodecheck`. It accepts `--extra-bind SRC[:DEST]` and `--extra-read-bind SRC[:DEST]` wrapper flags before the subcommand. Auth, session state, and Happy pairing are stored under `$CLAUDE_MOBILE_HOME` (see [script](bin/claude-mobile)).
 
-Build note: on proxy-restricted clusters the image installs `pnpm` via `npm` (corepack ignores the proxy) and sets `ELECTRON_SKIP_BINARY_DOWNLOAD=1` (Happy 1.1.8 added an electron package whose postinstall otherwise fetches a binary directly). If `mksquashfs` aborts at the final packing step under a tight job memory limit, cap it: `singularity build --mksquashfs-args "-processors 4 -mem 2048M" images/claude-mobile.sif images/claude-mobile.def`.
+Build note: on proxy-restricted clusters the image installs `pnpm` via `npm` (corepack ignores the proxy) and sets `ELECTRON_SKIP_BINARY_DOWNLOAD=1` (Happy 1.1.8 added an electron package whose postinstall otherwise fetches a binary directly). If `mksquashfs` aborts at the final packing step under a tight job memory limit, cap it: `singularity build --mksquashfs-args "-processors 4 -mem 2048M" serve-sandboxes/claude-mobile.sif serve-sandboxes/claude-mobile.def`.
 
 ## See also
 - https://github.com/rcarmo/agentbox

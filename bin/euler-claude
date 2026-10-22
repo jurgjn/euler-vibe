@@ -9,7 +9,8 @@
 # - .euler-vibe/mounts in $PWD - project-specific bind mounts, see
 #   read_project_mounts
 # - .euler-vibe/euler-claude.sif in $PWD - project-specific image used instead
-#   of images/claude-eu.sif; needs claude on PATH (run with singularity exec)
+#   of sandboxes/euler-claude.sif; needs claude on PATH (run with singularity
+#   exec)
 # - Arguments are passed to singularity exec, e.g. --bind /some/dir
 #
 # TODO:
@@ -80,7 +81,7 @@ read_project_mounts() {
     done < "$file"
 }
 
-# Used to infer locations of config/images/models
+# Used to infer locations of config/sandboxes/models
 export EUVIBE_DIR=$(dirname $(dirname $(realpath $0)))
 
 SCRIPT_NAME=$(basename "$(realpath "$0")")
@@ -123,10 +124,15 @@ if [[ -n "$wid" ]]; then
     exit 0
 fi
 
-CLAUDE_IMAGE=$EUVIBE_DIR/images/claude-eu.sif
-# A project can bring its own image, e.g. claude-eu.sif plus extra packages
+CLAUDE_IMAGE=$EUVIBE_DIR/sandboxes/euler-claude.sif
+# A project can bring its own image, e.g. euler-claude.sif plus extra packages
 if [[ -f "$PWD/.euler-vibe/euler-claude.sif" ]]; then
     CLAUDE_IMAGE=$PWD/.euler-vibe/euler-claude.sif
+fi
+# Fail here rather than in the tmux window, which would close without a trace
+if [[ ! -f "$CLAUDE_IMAGE" ]]; then
+    echo "image not found: $CLAUDE_IMAGE" >&2
+    exit 1
 fi
 CLAUDE_HOME=$EUVIBE_DIR/home/euler-claude
 mkdir -p "$CLAUDE_HOME"

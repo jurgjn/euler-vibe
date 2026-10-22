@@ -11,7 +11,7 @@ set -v -x -e -u -o pipefail
 
 echo EUVIBE_DIR is $EUVIBE_DIR, EUVIBE_PORT is $EUVIBE_PORT
 
-export EUVIBE_SIF=$EUVIBE_DIR/images/sglang_v0.5.21.sif
+export EUVIBE_SIF=$EUVIBE_DIR/serve-sandboxes/sglang_v0.5.21.sif
 
 export FROM="$(hostname) ${SLURM_NODEID}/${SLURM_NNODES}:"
 export HEAD_NAME=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)

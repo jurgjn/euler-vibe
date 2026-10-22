@@ -12,7 +12,7 @@ From: ubuntu:24.04
     /uvx /bin/
 
 %files
-    images/patch-happy-force-polling.mjs /opt/patch-happy-force-polling.mjs
+    serve-sandboxes/patch-happy-force-polling.mjs /opt/patch-happy-force-polling.mjs
 
 %post
     export DEBIAN_FRONTEND=noninteractive

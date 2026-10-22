@@ -6,7 +6,7 @@ set -euo pipefail
 CLAUDE_MOBILE_BIN=$(realpath "$0")
 CLAUDE_MOBILE_DIR=$(dirname "$(dirname "$CLAUDE_MOBILE_BIN")")
 CLAUDE_MOBILE_HOME=${CLAUDE_MOBILE_HOME:-$CLAUDE_MOBILE_DIR/home/claude-mobile}
-CLAUDE_MOBILE_IMAGE=${CLAUDE_MOBILE_IMAGE:-$CLAUDE_MOBILE_DIR/images/claude-mobile.sif}
+CLAUDE_MOBILE_IMAGE=${CLAUDE_MOBILE_IMAGE:-$CLAUDE_MOBILE_DIR/serve-sandboxes/claude-mobile.sif}
 CLAUDE_MOBILE_SHELLRC=$CLAUDE_MOBILE_DIR/bin/claude-mobile-shellrc
 CLAUDE_MOBILE_WORKSPACE_DIR=$(pwd)
 CLAUDE_MOBILE_TMPDIR=${TMPDIR:-/tmp}/claude-mobile.$$

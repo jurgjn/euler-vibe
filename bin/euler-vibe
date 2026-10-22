@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# Used to infer locations of config/images/models
+# Used to infer locations of config/serve-sandboxes/models
 export EUVIBE_DIR=$(dirname $(dirname $(realpath $0)))
 export EUVIBE_PORT=${EUVIBE_PORT:-27182}
 export EUVIBE_LOCAL_PORT=27183
@@ -66,7 +66,7 @@ EOF
 }
 
 cmd_claude() {
-    CLAUDE_IMAGE=$EUVIBE_DIR/images/claude-eu.sif
+    CLAUDE_IMAGE=$EUVIBE_DIR/sandboxes/euler-claude.sif
     CLAUDE_HOME=$EUVIBE_DIR/home/euler-claude
     mkdir -p "$CLAUDE_HOME"
     chmod 700 "$CLAUDE_HOME"
@@ -137,7 +137,7 @@ cmd_pi_llama() {
         --bind "$PWD:$PWD" \
         --home "$PI_HOME:$HOME" \
         "${EUVIBE_APPTAINER_ARGS_ARRAY[@]}" \
-        $EUVIBE_DIR/images/pi-eu.sif \
+        $EUVIBE_DIR/sandboxes/euler-qwen27b.sif \
         --provider sglang --model "$EUVIBE_MODEL" "$@"
 }
 
@@ -163,7 +163,7 @@ cmd_pi_sglang() {
         --bind "$PWD:$PWD" \
         --home "$PI_HOME:$HOME" \
         "${EUVIBE_APPTAINER_ARGS_ARRAY[@]}" \
-        $EUVIBE_DIR/images/pi-eu.sif \
+        $EUVIBE_DIR/sandboxes/euler-qwen27b.sif \
         --provider sglang --model "$EUVIBE_MODEL" "$@"
 }
 
@@ -177,7 +177,7 @@ cmd_pull() {
     singularity run \
         --cwd=$EUVIBE_DIR/models \
         --bind $EUVIBE_DIR/models \
-        $EUVIBE_DIR/images/git_latest.sif \
+        $EUVIBE_DIR/serve-sandboxes/git_latest.sif \
         lfs clone https://huggingface.co/"$@" "$@"
 }
 

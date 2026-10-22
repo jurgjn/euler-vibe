@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# Used to infer locations of config/images/models
+# Used to infer locations of config/sandboxes/models
 export EUVIBE_DIR=$(dirname $(dirname $(realpath $0)))
 export EUVIBE_PORT=${EUVIBE_PORT:-27182}
 export EUVIBE_MODEL=${EUVIBE_MODEL:-Qwen/Qwen3.8-27B-FP8}
@@ -45,8 +45,8 @@ Run euler-qwen27b in the same directory to resume its pi window.
 Extra bind mounts for a project go in .euler-vibe/mounts (one
 src[:dst[:opts]] per line, # comments allowed); they apply when its pi window
 is created. If .euler-vibe/euler-qwen27b.sif exists, it is used instead of
-images/pi-eu.sif; its %runscript must start pi with the given args, as in
-images/pi-eu.def:
+sandboxes/euler-qwen27b.sif; its %runscript must start pi with the given args,
+as in sandboxes/euler-qwen27b.def:
     exec pi "\$@"
 EOF
 }
@@ -301,8 +301,8 @@ EOF
         done
     fi
 
-    # A project can bring its own image, e.g. pi-eu.sif plus extra packages
-    local image="$EUVIBE_DIR/images/pi-eu.sif"
+    # A project can bring its own image, e.g. euler-qwen27b.sif plus extras
+    local image="$EUVIBE_DIR/sandboxes/euler-qwen27b.sif"
     if [[ -f "$PWD/.euler-vibe/euler-qwen27b.sif" ]]; then
         image="$PWD/.euler-vibe/euler-qwen27b.sif"
     fi

@@ -58,7 +58,7 @@ From: vllm/vllm-openai:latest-cu130
     exec pi "$@"
 
 %labels
-    BuildCommand apptainer build --force pi-eu.sif pi-eu.def
+    BuildCommand apptainer build --force euler-qwen27b.sif euler-qwen27b.def
 
 %help
     Run sandboxed ollama/pi on euler with the following features/fixes/kludges:

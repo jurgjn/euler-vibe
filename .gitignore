@@ -5,7 +5,8 @@
 home/
 
 # Built container images.
-images/*.sif
+serve-sandboxes/*.sif
+sandboxes/*.sif
 
 # Paperpile library downloaded by bin/pget
 paperpile/
@@ -25,7 +26,8 @@ logs/*
 cache/
 
 # Snakemake state from building images
-images/.snakemake-eu/
+serve-sandboxes/.snakemake/
+serve-sandboxes/.snakemake-eu/
 
 # NFS placeholders for files deleted while still open
 .nfs*
