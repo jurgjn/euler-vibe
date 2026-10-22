@@ -4,7 +4,7 @@
 # one window per directory. If the current directory already has a window,
 # switch to it instead (arguments are then ignored).
 #
-# - Home is home/claude-eu in this repo (persists login/config across runs);
+# - Home is home/euler-claude in this repo (persists login/config across runs);
 #   only $PWD and the extra mounts below are visible from the host
 # - .euvibe/mounts in $PWD - project-specific bind mounts, see
 #   read_project_mounts
@@ -129,7 +129,7 @@ CLAUDE_IMAGE=$EUVIBE_DIR/images/claude-eu.sif
 if [[ -f "$PWD/.euvibe/$SCRIPT_NAME.sif" ]]; then
     CLAUDE_IMAGE=$PWD/.euvibe/$SCRIPT_NAME.sif
 fi
-CLAUDE_HOME=$EUVIBE_DIR/home/claude-eu
+CLAUDE_HOME=$EUVIBE_DIR/home/euler-claude
 mkdir -p "$CLAUDE_HOME"
 chmod 700 "$CLAUDE_HOME"
 OVERLAY_DIR="$TMPDIR/euler-vibe-claude_overlay.$$"

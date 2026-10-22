@@ -67,7 +67,7 @@ EOF
 
 cmd_claude() {
     CLAUDE_IMAGE=$EUVIBE_DIR/images/claude-eu.sif
-    CLAUDE_HOME=$EUVIBE_DIR/home/claude-eu
+    CLAUDE_HOME=$EUVIBE_DIR/home/euler-claude
     mkdir -p "$CLAUDE_HOME"
     chmod 700 "$CLAUDE_HOME"
     OVERLAY_DIR="$TMPDIR/euler-vibe-claude_overlay.$$"

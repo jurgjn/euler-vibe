@@ -15,7 +15,7 @@ EUVIBE_PAPERPILE_REMOTE=${EUVIBE_PAPERPILE_REMOTE:-paperpile:Paperpile}
 # Paperpile BibTeX auto-sync link; if unset, the newest *.bib in the Drive folder is used
 EUVIBE_PAPERPILE_BIB_URL=${EUVIBE_PAPERPILE_BIB_URL:-}
 
-SKILL_DIR=$EUVIBE_DIR/home/claude-eu/.claude/skills/paperpile
+SKILL_DIR=$EUVIBE_DIR/home/euler-claude/.claude/skills/paperpile
 
 usage() {
     cat <<EOF
@@ -42,7 +42,7 @@ Output (\$EUVIBE_PAPERPILE_DIR, currently $EUVIBE_PAPERPILE_DIR):
     pdfs/           Mirror of the Paperpile folder in Google Drive
 
 \`euler-vibe claude\` mounts this directory read-only and pget installs a
-'paperpile' skill into the claude-eu home, so Claude finds it by itself.
+'paperpile' skill into the euler-claude home, so Claude finds it by itself.
 
 Settings (environment or $PGET_CONF):
     EUVIBE_PAPERPILE_DIR       Output directory
