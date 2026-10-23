@@ -144,70 +144,6 @@ host_git_ident() {
 }
 
 # ---------------------------------------------------------------------------
-# project-specific mounts
-# ---------------------------------------------------------------------------
-
-# Read extra bind mounts for this project from .euler-vibe/mounts in the
-# current directory into the array EUVIBE_MOUNT_ARGS (as --bind <spec> pairs).
-# One mount per line in singularity's --bind format, src[:dst[:opts]], e.g.
-#     /cluster/work/beltrao/jjaenes/data           # same path inside
-#     ~/scratch:/scratch:ro
-#     $WORK/26.06_pstQTL::ro                       # empty dst: same path, ro
-#     ${DATA}/*.parquet::ro                        # one mount per match
-# Blank lines and # comments are ignored. $VAR and ${VAR} are replaced from
-# the environment (an unset variable is an error), a leading ~ expands to
-# $HOME, a relative src is taken relative to the project directory and an
-# empty dst means the same path as src. A src containing *, ? or [ is a glob:
-# each match is mounted at its own path (dst must be empty), and no matches
-# is fine. Any other src must exist, rather than letting singularity abort.
-read_project_mounts() {
-    EUVIBE_MOUNT_ARGS=()
-    local file="$PWD/.euler-vibe/mounts" line out name src dst opts m
-    local var_re='\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)'
-    local -a matches
-    [[ -f "$file" ]] || return 0
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        line=${line%%#*}
-        line=${line#"${line%%[![:space:]]*}"}
-        line=${line%"${line##*[![:space:]]}"}
-        [[ -n "$line" ]] || continue
-
-        out=
-        while [[ "$line" =~ $var_re ]]; do
-            name=${BASH_REMATCH[1]:-${BASH_REMATCH[2]}}
-            if [[ ! -v $name ]]; then
-                echo "$file: \$$name is not set" >&2
-                return 1
-            fi
-            out+=${line%%"${BASH_REMATCH[0]}"*}${!name}
-            line=${line#*"${BASH_REMATCH[0]}"}
-        done
-        line=$out$line
-
-        IFS=: read -r src dst opts <<< "$line"
-        [[ "$src" == "~" || "$src" == "~/"* ]] && src=$HOME${src:1}
-        [[ "$src" == /* ]] || src=$PWD/$src
-
-        if [[ "$src" == *[*?[]* ]]; then
-            if [[ -n "$dst" ]]; then
-                echo "$file: glob $src needs an empty dst (src::opts)" >&2
-                return 1
-            fi
-            mapfile -t matches < <(compgen -G "$src" || true)
-        elif [[ -e "$src" ]]; then
-            matches=("$src")
-        else
-            echo "$file: $src does not exist" >&2
-            return 1
-        fi
-
-        for m in "${matches[@]}"; do
-            EUVIBE_MOUNT_ARGS+=(--bind "$m:${dst:-$m}${opts:+:$opts}")
-        done
-    done < "$file"
-}
-
-# ---------------------------------------------------------------------------
 # pi
 # ---------------------------------------------------------------------------
 
@@ -293,14 +229,6 @@ EOF
     echo "$PI_CODING_AGENT_DIR/models.json":
     cat "$PI_CODING_AGENT_DIR/models.json"
 
-    read_project_mounts
-    if (( ${#EUVIBE_MOUNT_ARGS[@]} > 0 )); then
-        echo "Extra mounts from .euler-vibe/mounts:"
-        for ((i = 1; i < ${#EUVIBE_MOUNT_ARGS[@]}; i += 2)); do
-            echo "    ${EUVIBE_MOUNT_ARGS[i]}"
-        done
-    fi
-
     # A project can bring its own image, e.g. euler-qwen27b.sif plus extras
     local image="$EUVIBE_DIR/sandboxes/euler-qwen27b.sif"
     if [[ -f "$PWD/.euler-vibe/euler-qwen27b.sif" ]]; then
@@ -308,14 +236,10 @@ EOF
     fi
     echo "Image: $image"
 
-    export OVERLAY_DIR="${TMPDIR:-/tmp}/euler-vibe.$$"
-    mkdir -p "$OVERLAY_DIR"/overlay
-    mkdir -p "$OVERLAY_DIR"/tmp
-
-    singularity run \
+    # euler-sandbox adds the throwaway /tmp + overlay and .euler-vibe/mounts;
+    # $PWD is mounted as home
+    "$EUVIBE_DIR/bin/euler-sandbox" --home "$PWD:$PWD" run \
         --nv \
-        --cleanenv \
-        --containall \
         --env EUVIBE_MODEL="$EUVIBE_MODEL" \
         --env OPENAI_BASE_URL="$OPENAI_BASE_URL" \
         --env OPENAI_API_KEY="$OPENAI_API_KEY" \
@@ -324,10 +248,6 @@ EOF
         --env GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-}" \
         --env GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-}" \
         --env GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-}" \
-        --overlay "$OVERLAY_DIR"/overlay \
-        --bind "$OVERLAY_DIR"/tmp:/tmp \
-        --home "$PWD:$PWD" \
-        "${EUVIBE_MOUNT_ARGS[@]}" \
         "$image" \
         --provider sglang --model "$EUVIBE_SERVED_MODEL_NAME" --thinking xhigh "$@"
 }

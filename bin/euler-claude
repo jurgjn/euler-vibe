@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# euler-claude starts Claude Code sandboxed by singularity in window
+# euler-claude starts Claude Code sandboxed by euler-sandbox in window
 # 'claude:<dir>' of the tmux session named after this script (euler-claude),
 # one window per directory. If the current directory already has a window,
 # switch to it instead (arguments are then ignored).
 #
 # - Home is home/euler-claude in this repo (persists login/config across runs);
 #   only $PWD and the extra mounts below are visible from the host
-# - .euler-vibe/mounts in $PWD - project-specific bind mounts, see
-#   read_project_mounts
+# - .euler-vibe/mounts in $PWD - project-specific bind mounts, applied by
+#   euler-sandbox
 # - .euler-vibe/euler-claude.sif in $PWD - project-specific image used instead
 #   of sandboxes/euler-claude.sif; needs claude on PATH (run with singularity
 #   exec)
@@ -20,66 +20,6 @@
 #   it at the bottom of the script?
 
 set -euo pipefail
-
-# Read extra bind mounts for this project from .euler-vibe/mounts in the
-# current directory into the array EUVIBE_MOUNT_ARGS (as --bind <spec> pairs).
-# One mount per line in singularity's --bind format, src[:dst[:opts]], e.g.
-#     /cluster/work/beltrao/jjaenes/data           # same path inside
-#     ~/scratch:/scratch:ro
-#     $WORK/26.06_pstQTL::ro                       # empty dst: same path, ro
-#     ${DATA}/*.parquet::ro                        # one mount per match
-# Blank lines and # comments are ignored. $VAR and ${VAR} are replaced from
-# the environment (an unset variable is an error), a leading ~ expands to
-# $HOME, a relative src is taken relative to the project directory and an
-# empty dst means the same path as src. A src containing *, ? or [ is a glob:
-# each match is mounted at its own path (dst must be empty), and no matches
-# is fine. Any other src must exist, rather than letting singularity abort.
-read_project_mounts() {
-    EUVIBE_MOUNT_ARGS=()
-    local file="$PWD/.euler-vibe/mounts" line out name src dst opts m
-    local var_re='\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)'
-    local -a matches
-    [[ -f "$file" ]] || return 0
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        line=${line%%#*}
-        line=${line#"${line%%[![:space:]]*}"}
-        line=${line%"${line##*[![:space:]]}"}
-        [[ -n "$line" ]] || continue
-
-        out=
-        while [[ "$line" =~ $var_re ]]; do
-            name=${BASH_REMATCH[1]:-${BASH_REMATCH[2]}}
-            if [[ ! -v $name ]]; then
-                echo "$file: \$$name is not set" >&2
-                return 1
-            fi
-            out+=${line%%"${BASH_REMATCH[0]}"*}${!name}
-            line=${line#*"${BASH_REMATCH[0]}"}
-        done
-        line=$out$line
-
-        IFS=: read -r src dst opts <<< "$line"
-        [[ "$src" == "~" || "$src" == "~/"* ]] && src=$HOME${src:1}
-        [[ "$src" == /* ]] || src=$PWD/$src
-
-        if [[ "$src" == *[*?[]* ]]; then
-            if [[ -n "$dst" ]]; then
-                echo "$file: glob $src needs an empty dst (src::opts)" >&2
-                return 1
-            fi
-            mapfile -t matches < <(compgen -G "$src" || true)
-        elif [[ -e "$src" ]]; then
-            matches=("$src")
-        else
-            echo "$file: $src does not exist" >&2
-            return 1
-        fi
-
-        for m in "${matches[@]}"; do
-            EUVIBE_MOUNT_ARGS+=(--bind "$m:${dst:-$m}${opts:+:$opts}")
-        done
-    done < "$file"
-}
 
 # Used to infer locations of config/sandboxes/models
 export EUVIBE_DIR=$(dirname $(dirname $(realpath $0)))
@@ -137,35 +77,33 @@ fi
 CLAUDE_HOME=$EUVIBE_DIR/home/euler-claude
 mkdir -p "$CLAUDE_HOME"
 chmod 700 "$CLAUDE_HOME"
-OVERLAY_DIR="$TMPDIR/euler-vibe-claude_overlay.$$"
-mkdir -p "$OVERLAY_DIR"/overlay "$OVERLAY_DIR"/tmp
 
-read_project_mounts
+# Check .euler-vibe/mounts here, as errors in the tmux window would be lost
+"$EUVIBE_DIR/bin/euler-sandbox" --check-mounts
 
+# euler-sandbox adds the throwaway /tmp + overlay and mounts $PWD and
+# .euler-vibe/mounts
 CMD=(
-    singularity exec
+    "$EUVIBE_DIR/bin/euler-sandbox" --home "$CLAUDE_HOME:$HOME"
+    exec
     --nv
-    --contain
-    --cleanenv
-    --home "$CLAUDE_HOME:$HOME"
-    --overlay "$OVERLAY_DIR"/overlay
-    --bind "$OVERLAY_DIR"/tmp:/tmp
-    --bind "$PWD:$PWD"
-    "${EUVIBE_MOUNT_ARGS[@]}"
     "$@"
-    --cwd "$PWD"
     --env TERM="${TERM:-xterm-256color}"
     --env DISABLE_AUTOUPDATER=1
     --env TMPDIR=/tmp
     "$CLAUDE_IMAGE" claude --dangerously-skip-permissions
 )
 
+# A tmux server that is already running would otherwise give the window its
+# own (possibly stale) environment; euler-sandbox puts its overlay in $TMPDIR
+ENV=(-e PATH="$PATH" -e TMPDIR="${TMPDIR:-/tmp}")
+
 if tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
     wid=$(tmux new-window -d -P -F '#{window_id}' \
-              -t "=$TMUX_SESSION:" -n "$WINDOW_NAME" -c "$PWD" "${CMD[@]}")
+              -t "=$TMUX_SESSION:" -n "$WINDOW_NAME" -c "$PWD" "${ENV[@]}" "${CMD[@]}")
 else
     wid=$(tmux new-session -d -P -F '#{window_id}' \
-              -s "$TMUX_SESSION" -n "$WINDOW_NAME" -c "$PWD" "${CMD[@]}")
+              -s "$TMUX_SESSION" -n "$WINDOW_NAME" -c "$PWD" "${ENV[@]}" "${CMD[@]}")
 fi
 tmux set-option -w -t "$wid" @euvibe_key "$WINDOW_KEY"
 tmux set-option -w -t "$wid" automatic-rename off

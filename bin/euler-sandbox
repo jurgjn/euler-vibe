@@ -2,13 +2,120 @@
 #
 # euler-sandbox - run `singularity` in a clean environment using euler-tailored throwaway mounts
 #
+# The container sees only $PWD (at the same path, also the working directory)
+# plus whatever is passed in [args...]. /tmp, the home directory and writes
+# outside of bind mounts (--overlay) go to a directory under $TMPDIR that is
+# removed on exit. --home <spec> replaces the throwaway home, e.g. to keep a
+# persistent one; if its destination is $PWD, $PWD is mounted only as home.
+#
+# Extra bind mounts for a project are read from .euler-vibe/mounts in $PWD,
+# see read_project_mounts. --check-mounts only checks that file and exits.
+#
 
 set -euo pipefail
 
-if [ "$#" -lt 1 ]; then
-    echo "Usage: $(basename "$0") <singularity-subcommand> [args...]" >&2
+usage() {
+    echo "Usage: $(basename "$0") [--home <src[:dst]>] <singularity-subcommand> [args...]" >&2
+    echo "       $(basename "$0") --check-mounts" >&2
     echo "  e.g.: $(basename "$0") exec my_container.sif echo hello" >&2
     exit 1
+}
+
+# Read extra bind mounts for this project from .euler-vibe/mounts in the
+# current directory into the array EUVIBE_MOUNT_ARGS (as --bind <spec> pairs).
+# One mount per line in singularity's --bind format, src[:dst[:opts]], e.g.
+#     /cluster/work/beltrao/jjaenes/data           # same path inside
+#     ~/scratch:/scratch:ro
+#     $WORK/26.06_pstQTL::ro                       # empty dst: same path, ro
+#     ${DATA}/*.parquet::ro                        # one mount per match
+# Blank lines and # comments are ignored. $VAR and ${VAR} are replaced from
+# the environment (an unset variable is an error), a leading ~ expands to
+# $HOME, a relative src is taken relative to the project directory and an
+# empty dst means the same path as src. A src containing *, ? or [ is a glob:
+# each match is mounted at its own path (dst must be empty), and no matches
+# is fine. Any other src must exist, rather than letting singularity abort.
+read_project_mounts() {
+    EUVIBE_MOUNT_ARGS=()
+    local file="$PWD/.euler-vibe/mounts" line out name src dst opts m
+    local var_re='\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)'
+    local -a matches
+    [[ -f "$file" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=${line%%#*}
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        [[ -n "$line" ]] || continue
+
+        out=
+        while [[ "$line" =~ $var_re ]]; do
+            name=${BASH_REMATCH[1]:-${BASH_REMATCH[2]}}
+            if [[ ! -v $name ]]; then
+                echo "$file: \$$name is not set" >&2
+                return 1
+            fi
+            out+=${line%%"${BASH_REMATCH[0]}"*}${!name}
+            line=${line#*"${BASH_REMATCH[0]}"}
+        done
+        line=$out$line
+
+        IFS=: read -r src dst opts <<< "$line"
+        [[ "$src" == "~" || "$src" == "~/"* ]] && src=$HOME${src:1}
+        [[ "$src" == /* ]] || src=$PWD/$src
+
+        if [[ "$src" == *[*?[]* ]]; then
+            if [[ -n "$dst" ]]; then
+                echo "$file: glob $src needs an empty dst (src::opts)" >&2
+                return 1
+            fi
+            mapfile -t matches < <(compgen -G "$src" || true)
+        elif [[ -e "$src" ]]; then
+            matches=("$src")
+        else
+            echo "$file: $src does not exist" >&2
+            return 1
+        fi
+
+        for m in "${matches[@]}"; do
+            EUVIBE_MOUNT_ARGS+=(--bind "$m:${dst:-$m}${opts:+:$opts}")
+        done
+    done < "$file"
+}
+
+home=
+check_mounts=
+while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+        --home)
+            (( $# >= 2 )) || usage
+            home=$2
+            shift 2
+            ;;
+        --home=*)
+            home=${1#--home=}
+            shift
+            ;;
+        --check-mounts)
+            check_mounts=1
+            shift
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+
+read_project_mounts
+if [[ -n "$check_mounts" ]]; then
+    exit 0
+fi
+
+(( $# >= 1 )) || usage
+
+if (( ${#EUVIBE_MOUNT_ARGS[@]} > 0 )); then
+    echo "Extra mounts from .euler-vibe/mounts:" >&2
+    for ((i = 1; i < ${#EUVIBE_MOUNT_ARGS[@]}; i += 2)); do
+        echo "    ${EUVIBE_MOUNT_ARGS[i]}" >&2
+    done
 fi
 
 tmpdir="${TMPDIR:-/tmp}"
@@ -21,6 +128,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+home=${home:-$overlay_dir/home}
+opts=(
+    --cleanenv
+    --containall
+    --home "$home"
+    --overlay "$overlay_dir"/overlay
+    --bind "$overlay_dir"/tmp:/tmp
+)
+# --home src is the same as src:src; don't mount $PWD twice if it is home
+if [[ "${home#*:}" != "$PWD" ]]; then
+    opts+=(--bind "$PWD:$PWD")
+fi
+opts+=(--cwd "$PWD" "${EUVIBE_MOUNT_ARGS[@]}")
+
 # First argument is the singularity subcommand (exec/run/shell/...);
 # --overlay must come after it and before the container/command.
 subcmd="$1"
@@ -28,12 +149,4 @@ shift
 
 # Not exec: the shell has to outlive singularity for the EXIT trap to remove
 # the overlay. The script's exit status is still singularity's.
-singularity "$subcmd" \
-    --cleanenv \
-    --containall \
-    --home "$overlay_dir"/home \
-    --overlay "$overlay_dir"/overlay \
-    --bind "$overlay_dir"/tmp:/tmp \
-    --bind "$PWD:$PWD" \
-    --cwd "$PWD" \
-    "$@"
+singularity "$subcmd" "${opts[@]}" "$@"
