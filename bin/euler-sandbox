@@ -35,9 +35,9 @@ usage() {
 # Read extra bind mounts for this project from .euler-vibe/mounts in the
 # current directory into the array EUVIBE_MOUNT_ARGS (as --bind <spec> pairs).
 # One mount per line in singularity's --bind format, src[:dst[:opts]], e.g.
-#     /cluster/work/beltrao/jjaenes/data           # same path inside
-#     ~/scratch:/scratch:ro
-#     $WORK/26.06_pstQTL::ro                       # empty dst: same path, ro
+#     /cluster/work/beltrao/shared::ro             # empty dst: same path, ro
+#     /cluster/work/beltrao/jjaenes/data           # read-write, same path
+#     ~/scratch:/scratch:ro                        # different path inside
 #     ${DATA}/*.parquet::ro                        # one mount per match
 # Blank lines and # comments are ignored. $VAR and ${VAR} are replaced from
 # the environment (an unset variable is an error), a leading ~ expands to

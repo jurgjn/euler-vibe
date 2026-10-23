@@ -45,14 +45,21 @@ All optional, in the directory you start `euler-claude` from:
 | `.euler-vibe/sandboxes/euler-claude.def` | Definition the project image is built (and rebuilt) from |
 | `.euler-vibe/overlays/euler-claude.img` | Persistent overlay image, created automatically |
 
-Example `.euler-vibe/mounts`:
+Example `.euler-vibe/mounts`, making the group's shared data available read-only:
 ```
-/cluster/work/beltrao/jjaenes/data           # same path inside
-~/scratch:/scratch:ro
-$WORK/26.06_pstQTL::ro                       # empty dst: same path, read-only
+/cluster/work/beltrao/shared::ro             # empty dst: same path inside
+/cluster/project/beltrao/shared::ro
+/cluster/project/alphafold/alphafold3::ro
+```
+Other forms:
+```
+/cluster/work/beltrao/jjaenes/data           # read-write, same path inside
+~/scratch:/scratch:ro                        # different path inside
 ${DATA}/*.parquet::ro                        # one mount per match
 ```
 `$VAR` and `${VAR}` are taken from the environment, `~` is your home, relative paths are relative to the project directory. Every listed path must exist (globs may match nothing), and mistakes are reported before the tmux session starts.
+
+A mount alone doesn't tell the agent what is in it. [`AGENTS.md`](AGENTS.md) describes the three directories above (layout, file formats, what not to do with them); copy the relevant sections into the project's own `AGENTS.md`/`CLAUDE.md`.
 
 Add `.euler-vibe/overlays/` (and `.euler-vibe/sandboxes/*.sif`) to the project's `.gitignore`.
 
