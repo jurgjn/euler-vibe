@@ -4,9 +4,9 @@
 # auth, logs, histories, and other local state that should stay untracked.
 home/
 
-# Built container images.
-serve-local/sandboxes/*.sif
-sandboxes/*.sif
+# Built container images and overlay images (e.g. .euler-vibe/overlays/*.img)
+*.sif
+*.img
 
 # Paperpile library downloaded by bin/pget
 paperpile/
