@@ -1,6 +1,5 @@
 # euler-vibe
-An attempt at sandboxing coding agents on euler with singularity/apptainer. No guarantees, use at your own risk!
-- There's unrestricted access to network/GPU, please use accordingly and/or adjust as needed.
+An attempt at sandboxing coding agents on euler with singularity/apptainer. No guarantees, use at your own risk! There's unrestricted access to network/GPU, please use accordingly and/or adjust as needed..
 
 ## Install
 
@@ -25,10 +24,10 @@ Run it on a compute node with enough local scratch requested (`--tmp`), as that 
 
 ### What the container solves
 
-The container itself is started by [`bin/euler-sandbox`](bin/euler-sandbox), a wrapper around `singularity` that `euler-qwen27b` uses as well. Each choice below addresses a problem with running an agent on euler directly, or with apptainer's defaults:
+Each choice below addresses a problem with running an agent on euler directly, or with apptainer's defaults:
 
-- **The agent only sees the project.** The container runs with `--containall --cleanenv`: the only host directories inside are the current directory (at the same path, also the working directory) plus mounts listed in `.euler-vibe/mounts` (below). Your cluster home, other projects and the host environment (modules, conda, `PYTHONPATH`, ...) are not visible.
-- **`/tmp` is big enough.** With `--containall`, apptainer's `/tmp` is a small in-memory tmpfs (`sessiondir max size`, 64 MiB by default), which builds and package installs quickly fill up. `euler-sandbox` instead binds a fresh directory under `$TMPDIR`, the job's local scratch, to `/tmp`, and removes it when the container exits.
+- **The agent only sees the project.** The container runs with `--containall --cleanenv`: the only host directories inside are the current directory plus mounts listed in `.euler-vibe/mounts` (below). Your cluster home, other projects and the host environment (modules, conda, `PYTHONPATH`, ...) are not visible.
+- **`/tmp` is big enough.** With `--containall`, apptainer's `/tmp` is a small in-memory tmpfs (`sessiondir max size`, 64 MiB by default), which builds and package installs quickly fill up. `euler-claude` instead binds a fresh directory under `$TMPDIR`, the job's local scratch, to `/tmp`, and removes it when the container exits.
 - **You log in once.** Claude's login and settings, `~/.claude` and `~/.claude.json`, are mounted from `home/euler-claude` in this repo, shared by every project and session, so you don't have to log in again for each session or project. Your actual `~/.gitconfig`, if you have one, is mounted read-only so commits made in the container use your git identity. The rest of the home directory is part of the project's overlay image (below).
 - **No piles of small files on the remote file system.** Changes to the container's own file system, including the home directory, e.g. `apt-get`, `npm -g` or `pip install --user` installs, packages added to the image's Python environment in `/opt/venv`, or caches, go to a persistent overlay image `.euler-vibe/overlays/euler-claude.img` in the project. That is a single (sparse) ext3 file, rather than the many thousands of small files such installs would otherwise create on `/cluster/project` or `/cluster/work`, which are slow there and count against the file quota. It is created automatically on first use with a size of `$EUVIBE_OVERLAY_SIZE` (in GiB, or with an `M`/`G`/`T` suffix; default 50). Delete it to start from a clean image. (The project directory, `~/.claude` and `~/.claude.json` are bind mounts, so writes there go straight to the host as usual.)
 - **Images stay in sync with their definition.** If the `.def` next to an image has changed since the image was built (compared with the copy of the `.def` kept in the `.sif`), the image is rebuilt before starting.
