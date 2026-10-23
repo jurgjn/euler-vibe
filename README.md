@@ -2,6 +2,15 @@
 An attempt at sandboxing coding agents on euler with singularity/apptainer. No guarantees, use at your own risk!
 - There's unrestricted access to network/GPU, please use accordingly and/or adjust as needed.
 
+## Install
+
+Check out the repo to your home directory and add its `bin/` to your `PATH`:
+```
+git clone https://github.com/jurgjn/euler-vibe.git ~/euler-vibe
+echo 'export PATH=$HOME/euler-vibe/bin:$PATH' >> ~/.bashrc
+```
+The container images are not part of the repo: `euler-claude` builds `sandboxes/euler-claude.sif` from its `.def` on first launch.
+
 ## euler-claude
 
 [`bin/euler-claude`](bin/euler-claude) runs [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code) in a container, in its own tmux session for the current directory:
