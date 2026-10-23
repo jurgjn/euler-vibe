@@ -55,5 +55,5 @@ Add `.euler-vibe/overlays/` (and `.euler-vibe/sandboxes/*.sif`) to the project's
 - [`claude-mobile`](bin/claude-mobile), [`claude-launch`](bin/claude-launch): an earlier Claude Code setup, with an interactive launcher and [Happy](https://github.com/slopus/happy) for remote control
 
 ## See also
-- https://github.com/rcarmo/agentbox
-- https://github.com/uw-psych/ollama-container
+- https://github.com/DennisGankin/vibe-tunnel - VS Code and Claude Code in an apptainer container in a Slurm job on euler, opened from your laptop through a VS Code tunnel
+- https://github.com/juliabuhmann/euler_agents - Claude Code in a singularity container on euler with only explicitly mounted directories, interactively in tmux or as unattended Slurm batch jobs that write a report
