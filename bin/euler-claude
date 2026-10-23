@@ -8,9 +8,9 @@
 #   only $PWD and the extra mounts below are visible from the host
 # - .euler-vibe/mounts in $PWD - project-specific bind mounts, applied by
 #   euler-sandbox
-# - .euler-vibe/euler-claude.sif in $PWD - project-specific image used instead
-#   of sandboxes/euler-claude.sif; needs claude on PATH (run with singularity
-#   exec)
+# - .euler-vibe/sandboxes/euler-claude.sif in $PWD - project-specific image
+#   used instead of sandboxes/euler-claude.sif; needs claude on PATH (run
+#   with singularity exec)
 # - Either image is (re)built first if a .def next to it (euler-claude.def)
 #   has changed since the image was built, see euler-sandbox --update-image
 # - .euler-vibe/overlays/euler-claude.img in $PWD - persistent overlay over the
@@ -78,8 +78,9 @@ fi
 CLAUDE_IMAGE=$EUVIBE_DIR/sandboxes/euler-claude.sif
 # A project can bring its own image, e.g. euler-claude.sif plus extra
 # packages, or the .def to build it from
-if [[ -f "$PWD/.euler-vibe/euler-claude.sif" || -f "$PWD/.euler-vibe/euler-claude.def" ]]; then
-    CLAUDE_IMAGE=$PWD/.euler-vibe/euler-claude.sif
+PROJECT_IMAGE=$PWD/.euler-vibe/sandboxes/euler-claude
+if [[ -f "$PROJECT_IMAGE.sif" || -f "$PROJECT_IMAGE.def" ]]; then
+    CLAUDE_IMAGE=$PROJECT_IMAGE.sif
 fi
 OVERLAY_IMAGE=$PWD/.euler-vibe/overlays/$SCRIPT_NAME.img
 # Check .euler-vibe/mounts, rebuild the image and create the overlay here

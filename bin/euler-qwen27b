@@ -44,13 +44,13 @@ Run euler-qwen27b in the same directory to resume its pi window.
 
 Extra bind mounts for a project go in .euler-vibe/mounts (one
 src[:dst[:opts]] per line, # comments allowed); they apply when its pi window
-is created. If .euler-vibe/euler-qwen27b.sif exists, it is used instead of
-sandboxes/euler-qwen27b.sif; its %runscript must start pi with the given args,
-as in sandboxes/euler-qwen27b.def:
+is created. If .euler-vibe/sandboxes/euler-qwen27b.sif exists, it is used
+instead of sandboxes/euler-qwen27b.sif; its %runscript must start pi with the
+given args, as in sandboxes/euler-qwen27b.def:
     exec pi "\$@"
 Either image is (re)built when a new pi window is created if the .def next to
 it (euler-qwen27b.def) has changed since the image was built; a project can
-also bring just .euler-vibe/euler-qwen27b.def.
+also bring just .euler-vibe/sandboxes/euler-qwen27b.def.
 
 Writes to the container's root filesystem (e.g. apt-get or npm -g installs)
 persist in .euler-vibe/overlays/euler-qwen27b.img, created if missing with a
@@ -157,7 +157,7 @@ host_git_ident() {
 # Print the image to run pi in. A project can bring its own image, e.g.
 # euler-qwen27b.sif plus extras, or the .def to build it from.
 pi_image() {
-    local project="$PWD/.euler-vibe/euler-qwen27b"
+    local project="$PWD/.euler-vibe/sandboxes/euler-qwen27b"
     if [[ -f "$project.sif" || -f "$project.def" ]]; then
         echo "$project.sif"
     else
