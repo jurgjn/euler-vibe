@@ -48,6 +48,9 @@ is created. If .euler-vibe/euler-qwen27b.sif exists, it is used instead of
 sandboxes/euler-qwen27b.sif; its %runscript must start pi with the given args,
 as in sandboxes/euler-qwen27b.def:
     exec pi "\$@"
+Either image is (re)built when a new pi window is created if the .def next to
+it (euler-qwen27b.def) has changed since the image was built; a project can
+also bring just .euler-vibe/euler-qwen27b.def.
 EOF
 }
 
@@ -147,6 +150,17 @@ host_git_ident() {
 # pi
 # ---------------------------------------------------------------------------
 
+# Print the image to run pi in. A project can bring its own image, e.g.
+# euler-qwen27b.sif plus extras, or the .def to build it from.
+pi_image() {
+    local project="$PWD/.euler-vibe/euler-qwen27b"
+    if [[ -f "$project.sif" || -f "$project.def" ]]; then
+        echo "$project.sif"
+    else
+        echo "$EUVIBE_DIR/sandboxes/euler-qwen27b.sif"
+    fi
+}
+
 # Entry point for `euler-qwen27b [args]`: create the per-directory window if
 # needed, then attach to it.
 cmd_pi() {
@@ -164,6 +178,10 @@ cmd_pi() {
             echo "Resumed existing window '$name'; ignored arguments: $*" >&2
         fi
     else
+        # Rebuild here rather than in the window, so the build's output stays
+        # in the terminal
+        "$EUVIBE_DIR/bin/euler-sandbox" --update-image "$(pi_image)"
+
         host_git_ident AUTHOR
         host_git_ident COMMITTER
 
@@ -229,11 +247,8 @@ EOF
     echo "$PI_CODING_AGENT_DIR/models.json":
     cat "$PI_CODING_AGENT_DIR/models.json"
 
-    # A project can bring its own image, e.g. euler-qwen27b.sif plus extras
-    local image="$EUVIBE_DIR/sandboxes/euler-qwen27b.sif"
-    if [[ -f "$PWD/.euler-vibe/euler-qwen27b.sif" ]]; then
-        image="$PWD/.euler-vibe/euler-qwen27b.sif"
-    fi
+    local image
+    image=$(pi_image)
     echo "Image: $image"
 
     # euler-sandbox adds the throwaway /tmp + overlay and .euler-vibe/mounts;

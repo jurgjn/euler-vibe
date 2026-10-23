@@ -9,14 +9,18 @@
 # persistent one; if its destination is $PWD, $PWD is mounted only as home.
 #
 # Extra bind mounts for a project are read from .euler-vibe/mounts in $PWD,
-# see read_project_mounts. --check-mounts only checks that file and exits.
+# see read_project_mounts. --check-mounts only checks that file.
+#
+# --update-image <image.sif> (re)builds image.sif from image.def next to it if
+# the image is missing or was built from a different .def, see update_image.
+# Without a singularity subcommand, the script exits after these checks.
 #
 
 set -euo pipefail
 
 usage() {
     echo "Usage: $(basename "$0") [--home <src[:dst]>] <singularity-subcommand> [args...]" >&2
-    echo "       $(basename "$0") --check-mounts" >&2
+    echo "       $(basename "$0") [--check-mounts] [--update-image <image.sif>]" >&2
     echo "  e.g.: $(basename "$0") exec my_container.sif echo hello" >&2
     exit 1
 }
@@ -81,8 +85,49 @@ read_project_mounts() {
     done < "$file"
 }
 
+# True if image $1 exists and was built from definition file $2. A .sif keeps
+# a copy of the .def it was built from; blank lines and trailing whitespace
+# are ignored.
+image_matches_def() {
+    [[ -f "$1" ]] &&
+        diff -q -B -Z <(singularity inspect --deffile "$1" 2>/dev/null) "$2" >/dev/null
+}
+
+# (Re)build image.sif from image.def in the same directory if the .def exists
+# and the image is missing or was built from a different .def. The build runs
+# in the .def's directory (for relative paths in it) and goes to a temporary
+# file, so a failed build keeps the old image. A lock on the .def stops two
+# launches from building at the same time.
+update_image() {
+    local sif def
+    sif=$(realpath -m "$1")
+    def=${sif%.sif}.def
+    [[ -f "$def" ]] || return 0
+    image_matches_def "$sif" "$def" && return 0
+
+    exec 9<"$def"
+    if ! flock -n 9; then
+        echo "Waiting for another build of $sif..." >&2
+        flock 9
+    fi
+    if ! image_matches_def "$sif" "$def"; then
+        if [[ -f "$sif" ]]; then
+            echo "$def has changed, rebuilding $sif" >&2
+        else
+            echo "Building $sif from $def" >&2
+        fi
+        build_tmp="$sif.build.$$"
+        trap 'rm -f "$build_tmp"' EXIT
+        (cd "$(dirname "$def")" && singularity build "$build_tmp" "$def") >&2
+        mv -f "$build_tmp" "$sif"
+        trap - EXIT
+    fi
+    exec 9<&-
+}
+
 home=
 check_mounts=
+image=
 while [[ "${1:-}" == --* ]]; do
     case "$1" in
         --home)
@@ -98,6 +143,15 @@ while [[ "${1:-}" == --* ]]; do
             check_mounts=1
             shift
             ;;
+        --update-image)
+            (( $# >= 2 )) || usage
+            image=$2
+            shift 2
+            ;;
+        --update-image=*)
+            image=${1#--update-image=}
+            shift
+            ;;
         *)
             usage
             ;;
@@ -105,7 +159,10 @@ while [[ "${1:-}" == --* ]]; do
 done
 
 read_project_mounts
-if [[ -n "$check_mounts" ]]; then
+if [[ -n "$image" ]]; then
+    update_image "$image"
+fi
+if (( $# == 0 )) && [[ -n "$check_mounts$image" ]]; then
     exit 0
 fi
 

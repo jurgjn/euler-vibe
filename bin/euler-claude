@@ -11,6 +11,8 @@
 # - .euler-vibe/euler-claude.sif in $PWD - project-specific image used instead
 #   of sandboxes/euler-claude.sif; needs claude on PATH (run with singularity
 #   exec)
+# - Either image is (re)built first if a .def next to it (euler-claude.def)
+#   has changed since the image was built, see euler-sandbox --update-image
 # - Arguments are passed to singularity exec, e.g. --bind /some/dir
 #
 # TODO:
@@ -65,11 +67,14 @@ if [[ -n "$wid" ]]; then
 fi
 
 CLAUDE_IMAGE=$EUVIBE_DIR/sandboxes/euler-claude.sif
-# A project can bring its own image, e.g. euler-claude.sif plus extra packages
-if [[ -f "$PWD/.euler-vibe/euler-claude.sif" ]]; then
+# A project can bring its own image, e.g. euler-claude.sif plus extra
+# packages, or the .def to build it from
+if [[ -f "$PWD/.euler-vibe/euler-claude.sif" || -f "$PWD/.euler-vibe/euler-claude.def" ]]; then
     CLAUDE_IMAGE=$PWD/.euler-vibe/euler-claude.sif
 fi
-# Fail here rather than in the tmux window, which would close without a trace
+# Check .euler-vibe/mounts and rebuild the image here rather than in the tmux
+# window, which would close without a trace on errors
+"$EUVIBE_DIR/bin/euler-sandbox" --check-mounts --update-image "$CLAUDE_IMAGE"
 if [[ ! -f "$CLAUDE_IMAGE" ]]; then
     echo "image not found: $CLAUDE_IMAGE" >&2
     exit 1
@@ -77,9 +82,6 @@ fi
 CLAUDE_HOME=$EUVIBE_DIR/home/euler-claude
 mkdir -p "$CLAUDE_HOME"
 chmod 700 "$CLAUDE_HOME"
-
-# Check .euler-vibe/mounts here, as errors in the tmux window would be lost
-"$EUVIBE_DIR/bin/euler-sandbox" --check-mounts
 
 # euler-sandbox adds the throwaway /tmp + overlay and mounts $PWD and
 # .euler-vibe/mounts
