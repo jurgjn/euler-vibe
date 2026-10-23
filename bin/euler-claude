@@ -4,8 +4,11 @@
 # directory already has a session, switch to it instead (arguments are then
 # ignored).
 #
-# - Home is home/euler-claude in this repo (persists login/config across runs);
-#   only $PWD and the extra mounts below are visible from the host
+# - Claude's login/config (~/.claude, ~/.claude.json) is mounted from
+#   home/euler-claude in this repo, shared by all projects; ~/.gitconfig is
+#   mounted read-only from your actual home, if it exists. The rest of $HOME is
+#   part of the project's overlay below. Only $PWD and the extra mounts below
+#   are visible from the host
 # - .euler-vibe/mounts in $PWD - project-specific bind mounts, applied by
 #   euler-sandbox
 # - .euler-vibe/sandboxes/euler-claude.sif in $PWD - project-specific image
@@ -92,16 +95,27 @@ if [[ ! -f "$CLAUDE_IMAGE" ]]; then
     exit 1
 fi
 CLAUDE_HOME=$EUVIBE_DIR/home/euler-claude
-mkdir -p "$CLAUDE_HOME"
+mkdir -p "$CLAUDE_HOME/.claude"
 chmod 700 "$CLAUDE_HOME"
+# Bind mounts need an existing source; Claude reads an empty object as no config
+if [[ ! -e "$CLAUDE_HOME/.claude.json" ]]; then
+    echo '{}' > "$CLAUDE_HOME/.claude.json"
+fi
+# Your git identity etc. for commits in the container, read-only
+GITCONFIG_MOUNT=()
+if [[ -f "$HOME/.gitconfig" ]]; then
+    GITCONFIG_MOUNT=(--bind "$HOME/.gitconfig:$HOME/.gitconfig:ro")
+fi
 
-# euler-sandbox adds the throwaway /tmp + overlay and mounts $PWD and
-# .euler-vibe/mounts
+# euler-sandbox adds the throwaway /tmp and mounts $PWD and .euler-vibe/mounts
 CMD=(
-    "$EUVIBE_DIR/bin/euler-sandbox" --home "$CLAUDE_HOME:$HOME"
+    "$EUVIBE_DIR/bin/euler-sandbox" --no-home
     --overlay-image "$OVERLAY_IMAGE"
     exec
     --nv
+    --bind "$CLAUDE_HOME/.claude:$HOME/.claude"
+    --bind "$CLAUDE_HOME/.claude.json:$HOME/.claude.json"
+    "${GITCONFIG_MOUNT[@]}"
     "$@"
     --env TERM="${TERM:-xterm-256color}"
     --env DISABLE_AUTOUPDATER=1

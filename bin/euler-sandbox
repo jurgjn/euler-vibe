@@ -7,6 +7,8 @@
 # outside of bind mounts (--overlay) go to a directory under $TMPDIR that is
 # removed on exit. --home <spec> replaces the throwaway home, e.g. to keep a
 # persistent one; if its destination is $PWD, $PWD is mounted only as home.
+# --no-home mounts no home at all, so $HOME is part of the overlay, e.g. to
+# keep it in --overlay-image along with the rest of the container.
 #
 # Extra bind mounts for a project are read from .euler-vibe/mounts in $PWD,
 # see read_project_mounts. --check-mounts only checks that file.
@@ -24,7 +26,7 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $(basename "$0") [--home <src[:dst]>] <singularity-subcommand> [args...]" >&2
+    echo "Usage: $(basename "$0") [--home <src[:dst]> | --no-home] <singularity-subcommand> [args...]" >&2
     echo "       $(basename "$0") [--check-mounts] [--update-image <image.sif>] [--overlay-image <file.img>]" >&2
     echo "  e.g.: $(basename "$0") exec my_container.sif echo hello" >&2
     exit 1
@@ -170,6 +172,7 @@ create_overlay_image() {
 }
 
 home=
+no_home=
 check_mounts=
 image=
 overlay_image=
@@ -182,6 +185,10 @@ while [[ "${1:-}" == --* ]]; do
             ;;
         --home=*)
             home=${1#--home=}
+            shift
+            ;;
+        --no-home)
+            no_home=1
             shift
             ;;
         --check-mounts)
@@ -242,11 +249,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-home=${home:-$overlay_dir/home}
-opts=(
-    --cleanenv
-    --containall
-    --home "$home"
+opts=(--cleanenv --containall)
+if [[ -n "$no_home" ]]; then
+    opts+=(--no-home)
+else
+    home=${home:-$overlay_dir/home}
+    opts+=(--home "$home")
+fi
+opts+=(
     --overlay "${overlay_image:-$overlay_dir/overlay}"
     --bind "$overlay_dir"/tmp:/tmp
 )
