@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# euler-claude starts Claude Code sandboxed by euler-sandbox in window
-# 'claude:<dir>' of the tmux session named after this script (euler-claude),
-# one window per directory. If the current directory already has a window,
-# switch to it instead (arguments are then ignored).
+# euler-claude starts Claude Code sandboxed by euler-sandbox in its own tmux
+# session 'euler-claude-<dir>', one session per directory. If the current
+# directory already has a session, switch to it instead (arguments are then
+# ignored).
 #
 # - Home is home/euler-claude in this repo (persists login/config across runs);
 #   only $PWD and the extra mounts below are visible from the host
@@ -28,42 +28,48 @@ export EUVIBE_DIR=$(dirname $(dirname $(realpath $0)))
 
 SCRIPT_NAME=$(basename "$(realpath "$0")")
 
-# One tmux session named after this script, with one window per directory.
-# tmux turns '.' and ':' into '_' in session names, so do the same here or
-# exact-match targets would miss. Windows are found by the window option
-# @euvibe_key ("claude:<full path>"); the visible name "claude:<basename>"
-# is only for display, as two directories can share a basename.
-TMUX_SESSION=${SCRIPT_NAME//[.:]/_}
-WINDOW_KEY="claude:$PWD"
-WINDOW_NAME="claude:${PWD##*/}"
+# One tmux session per directory, named after this script and the directory.
+# Sessions are found by the session option @euvibe_session ("claude:<full
+# path>") and addressed by their id ($N); the name is only for display, as two
+# directories can share a basename (the second one gets a -2 suffix etc.).
+SESSION_KEY="claude:$PWD"
 
 attach() {
-    tmux select-window -t "$1"
     if [[ -n "${TMUX:-}" ]]; then
         # Already inside tmux: switch instead of nesting
-        tmux switch-client -t "=$TMUX_SESSION"
+        tmux switch-client -t "$1"
     else
-        tmux attach-session -t "=$TMUX_SESSION"
+        tmux attach-session -t "$1"
     fi
 }
 
-# Resume this directory's window if it is still there. Attach only after the
-# loop: inside it, stdin is the window list rather than the terminal.
-wid=
-if tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
-    while IFS=$'\t' read -r id key; do
-        if [[ "$key" == "$WINDOW_KEY" ]]; then
-            wid=$id
-            break
-        fi
-    done < <(tmux list-windows -t "=$TMUX_SESSION" -F $'#{window_id}\t#{@euvibe_key}')
-fi
-if [[ -n "$wid" ]]; then
-    if (( $# > 0 )); then
-        echo "Resumed existing window '$WINDOW_NAME'; ignored arguments: $*" >&2
+# Resume this directory's session if it is still there. Attach only after the
+# loop: inside it, stdin is the session list rather than the terminal.
+sid=
+while IFS=$'\t' read -r id key name; do
+    if [[ "$key" == "$SESSION_KEY" ]]; then
+        sid=$id
+        break
     fi
-    attach "$wid"
+done < <(tmux list-sessions -F $'#{session_id}\t#{@euvibe_session}\t#{session_name}' 2>/dev/null || true)
+if [[ -n "$sid" ]]; then
+    if (( $# > 0 )); then
+        echo "Resumed existing session '$name'; ignored arguments: $*" >&2
+    fi
+    attach "$sid"
     exit 0
+fi
+
+# tmux turns '.' and ':' into '_' in session names, so do the same here or
+# exact-match targets would miss
+SESSION_NAME="$SCRIPT_NAME-${PWD##*/}"
+SESSION_NAME=${SESSION_NAME//[.:]/_}
+if tmux has-session -t "=$SESSION_NAME" 2>/dev/null; then
+    i=2
+    while tmux has-session -t "=$SESSION_NAME-$i" 2>/dev/null; do
+        i=$((i + 1))
+    done
+    SESSION_NAME=$SESSION_NAME-$i
 fi
 
 CLAUDE_IMAGE=$EUVIBE_DIR/sandboxes/euler-claude.sif
@@ -96,18 +102,13 @@ CMD=(
     "$CLAUDE_IMAGE" claude --dangerously-skip-permissions
 )
 
-# A tmux server that is already running would otherwise give the window its
+# A tmux server that is already running would otherwise give the session its
 # own (possibly stale) environment; euler-sandbox puts its overlay in $TMPDIR
 ENV=(-e PATH="$PATH" -e TMPDIR="${TMPDIR:-/tmp}")
 
-if tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
-    wid=$(tmux new-window -d -P -F '#{window_id}' \
-              -t "=$TMUX_SESSION:" -n "$WINDOW_NAME" -c "$PWD" "${ENV[@]}" "${CMD[@]}")
-else
-    wid=$(tmux new-session -d -P -F '#{window_id}' \
-              -s "$TMUX_SESSION" -n "$WINDOW_NAME" -c "$PWD" "${ENV[@]}" "${CMD[@]}")
-fi
-tmux set-option -w -t "$wid" @euvibe_key "$WINDOW_KEY"
-tmux set-option -w -t "$wid" automatic-rename off
-tmux set-option -w -t "$wid" allow-rename off
-attach "$wid"
+sid=$(tmux new-session -d -P -F '#{session_id}' \
+          -s "$SESSION_NAME" -n claude -c "$PWD" "${ENV[@]}" "${CMD[@]}")
+tmux set-option -t "$sid" @euvibe_session "$SESSION_KEY"
+tmux set-option -w -t "$sid" automatic-rename off
+tmux set-option -w -t "$sid" allow-rename off
+attach "$sid"
