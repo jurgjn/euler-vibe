@@ -13,7 +13,7 @@ CLAUDE_LAUNCH_BIN=$(realpath "$0")
 CLAUDE_LAUNCH_DIR=$(dirname "$(dirname "$CLAUDE_LAUNCH_BIN")")
 CLAUDE_MOBILE=$CLAUDE_LAUNCH_DIR/bin/claude-mobile
 CLAUDE_MOBILE_HOME=${CLAUDE_MOBILE_HOME:-$CLAUDE_LAUNCH_DIR/home/claude-mobile}
-CLAUDE_MOBILE_IMAGE=${CLAUDE_MOBILE_IMAGE:-$CLAUDE_LAUNCH_DIR/serve-sandboxes/claude-mobile.sif}
+CLAUDE_MOBILE_IMAGE=${CLAUDE_MOBILE_IMAGE:-$CLAUDE_LAUNCH_DIR/sandboxes/claude-mobile.sif}
 
 WORKSPACE=$(pwd)
 MODE=claude            # claude | happy | shell
