@@ -2,15 +2,15 @@
 
 set -euo pipefail
 
-# Used to infer locations of config/serve-sandboxes/models
+# Used to infer locations of config/serve-local
 export EUVIBE_DIR=$(dirname $(dirname $(realpath $0)))
 export EUVIBE_PORT=${EUVIBE_PORT:-27182}
 export EUVIBE_LOCAL_PORT=27183
 export EUVIBE_MODEL=${EUVIBE_MODEL:-Qwen/Qwen3.8-27B-FP8}
 
 # Model setup used by serve_local/pi: a directory with serve.sh (starts vllm/llama)
-# and models.json (pi config); bare names are looked up in serve/
-export EUVIBE_SERVE_LOCAL=${EUVIBE_SERVE_LOCAL:-Qwen3.8-27B_rtx_4090:2_sglang}
+# and models.json (pi config); bare names are looked up in serve-local/
+export EUVIBE_SERVE_LOCAL=${EUVIBE_SERVE_LOCAL:-euler-qwen27b}
 export EU_API_KEY="no-api"
 
 # Extra singularity/apptainer args for the claude/pi containers, e.g. per-project
@@ -38,11 +38,11 @@ Coding agents (run in a tmux session named after the current directory):
 
 Models & serving:
     list            List downloaded models
-    pull <repo>     Download a model from Hugging Face into models/
+    pull <repo>     Download a model from Hugging Face into serve-local/models/
     serve [sbatch-args...]
                     Submit a Slurm job serving \$EUVIBE_MODEL
     serve_local     Run serve.sh from \$EUVIBE_SERVE_LOCAL in tmux session 'serve_local'
-                    (default $EUVIBE_SERVE_LOCAL; available: $(cd "$EUVIBE_DIR/serve" && ls -d */ | tr -d / | tr '\n' ' '))
+                    (default $EUVIBE_SERVE_LOCAL; available: $(cd "$EUVIBE_DIR/serve-local" && ls -d */serve.sh | sed "s|/serve.sh||" | tr "\n" " "))
                     (output also saved to logs/serve_local-<date>-<time>.log)
     status          Show serve jobs, SSH tunnel and API settings
     scancel         Cancel the serve job
@@ -168,16 +168,16 @@ cmd_pi_sglang() {
 }
 
 cmd_list() {
-    cd $EUVIBE_DIR/models
+    cd $EUVIBE_DIR/serve-local/models
     du -h -d 2 . | awk -F"/" 'NF==3'
 }
 
 cmd_pull() {
-    mkdir -p $EUVIBE_DIR/models
+    mkdir -p $EUVIBE_DIR/serve-local/models
     singularity run \
-        --cwd=$EUVIBE_DIR/models \
-        --bind $EUVIBE_DIR/models \
-        $EUVIBE_DIR/serve-sandboxes/git_latest.sif \
+        --cwd=$EUVIBE_DIR/serve-local/models \
+        --bind $EUVIBE_DIR/serve-local/models \
+        $EUVIBE_DIR/serve-local/sandboxes/git_latest.sif \
         lfs clone https://huggingface.co/"$@" "$@"
 }
 
@@ -190,12 +190,12 @@ new_log() {
 cmd_serve() {
     export EULER_VIBE_LOGS=$(new_log serve)
     echo "Log: $EULER_VIBE_LOGS"
-    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EUVIBE_DIR/serve-dev/dsv4-flash_pro_6000.sbatch
+    sbatch --output=$EULER_VIBE_LOGS --error=$EULER_VIBE_LOGS "$@" $EUVIBE_DIR/serve-local/dev/dsv4-flash_pro_6000.sbatch
 }
 
 serve_local_dir() {
     local dir=$EUVIBE_SERVE_LOCAL
-    [[ $dir == */* ]] || dir=$EUVIBE_DIR/serve/$dir
+    [[ $dir == */* ]] || dir=$EUVIBE_DIR/serve-local/$dir
     [[ -f $dir/serve.sh && -f $dir/models.json ]] || {
         echo "Error: $dir must contain serve.sh and models.json" >&2
         exit 1

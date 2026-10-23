@@ -5,18 +5,18 @@
 home/
 
 # Built container images.
-serve-sandboxes/*.sif
+serve-local/sandboxes/*.sif
 sandboxes/*.sif
 
 # Paperpile library downloaded by bin/pget
 paperpile/
 
 # Downloaded model weights; only the README with the download commands is tracked
-models/*
-!models/README.md
+serve-local/models/*
+!serve-local/models/README.md
 
 # Experimental serving setups, kept local
-serve-dev/
+serve-local/dev/
 
 # Logs (tmux, sbatch output)
 *.log
@@ -26,8 +26,8 @@ logs/*
 cache/
 
 # Snakemake state from building images
-serve-sandboxes/.snakemake/
-serve-sandboxes/.snakemake-eu/
+serve-local/sandboxes/.snakemake/
+serve-local/sandboxes/.snakemake-eu/
 
 # NFS placeholders for files deleted while still open
 .nfs*

@@ -11,7 +11,7 @@ set -v -x -e -u -o pipefail
 
 echo EUVIBE_DIR is $EUVIBE_DIR, EUVIBE_PORT is $EUVIBE_PORT
 
-export EUVIBE_SIF=$EUVIBE_DIR/serve-sandboxes/sglang_v0.5.21.sif
+export EUVIBE_SIF=$EUVIBE_DIR/serve-local/sandboxes/sglang_v0.5.21.sif
 
 export FROM="$(hostname) ${SLURM_NODEID}/${SLURM_NNODES}:"
 export HEAD_NAME=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
@@ -82,7 +82,7 @@ ARGS=(
 )
 echo ${FROM} ARGS is "${ARGS[@]}"
 
-export MODEL_SRC=$EUVIBE_DIR/models/$EUVIBE_MODEL
+export MODEL_SRC=$EUVIBE_DIR/serve-local/models/$EUVIBE_MODEL
 export MODEL_DST=$OVERLAY_DIR/models/$EUVIBE_MODEL
 echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
@@ -92,7 +92,7 @@ rclone copy $MODEL_SRC $MODEL_DST \
     --multi-thread-streams=8 \
     --multi-thread-cutoff=64M
 
-export DRAFT_SRC=$EUVIBE_DIR/models/$EUVIBE_DRAFT
+export DRAFT_SRC=$EUVIBE_DIR/serve-local/models/$EUVIBE_DRAFT
 export DRAFT_DST=$OVERLAY_DIR/models/$EUVIBE_DRAFT
 echo ${FROM} Copying draft - MODEL_SRC is $DRAFT_SRC, MODEL_DST is $DRAFT_DST
 rclone copy $DRAFT_SRC $DRAFT_DST \

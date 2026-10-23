@@ -12,7 +12,7 @@ export EUVIBE_MODEL=${EUVIBE_MODEL:-Qwen/Qwen3.8-27B-FP8}
 export EUVIBE_SERVED_MODEL_NAME=${EUVIBE_SERVED_MODEL_NAME:-qwen3.8-27b}
 export EUVIBE_DRAFT=${EUVIBE_DRAFT:-incoai/Qwen3.8-27B-DFlash2}
 
-export EUVIBE_SERVE=${EUVIBE_SERVE:-$EUVIBE_DIR/serve/Qwen3.8-27B_rtx_4090:2_sglang}
+export EUVIBE_SERVE=${EUVIBE_SERVE:-$EUVIBE_DIR/serve-local/euler-qwen27b}
 # Default session name is the script's file name. tmux turns '.' and ':' into
 # '_' in session names, so do the same here or exact-match targets would miss.
 _script_name=${0##*/}
