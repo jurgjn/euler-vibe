@@ -26,17 +26,17 @@ Run it on a compute node with enough local scratch requested (`--tmp`), as that 
 
 Each choice below addresses a problem with running an agent on euler directly, or with apptainer's defaults:
 
-- **The agent only sees the project.** The container runs with `--containall --cleanenv`: the only host directories inside are the current directory plus mounts listed in `.euler-vibe/mounts` (below). Your cluster home, other projects and the host environment (modules, conda, `PYTHONPATH`, ...) are not visible.
+- **The agent only sees the project.** The container runs with `--containall --cleanenv`: the only host directories inside are the current directory plus mounts listed in `.euler-vibe/mounts` (below). Your cluster home, other projects and the host environment (modules, conda, `PYTHONPATH`, ...) are not visible. Started in [`example/`](example/), Claude sees `example/` and the group's three shared data directories, all read-only.
 - **`/tmp` is big enough.** With `--containall`, apptainer's `/tmp` is a small in-memory tmpfs (`sessiondir max size`, 64 MiB by default), which builds and package installs quickly fill up. `euler-claude` instead binds a fresh directory under `$TMPDIR`, the job's local scratch, to `/tmp`, and removes it when the container exits.
 - **You log in once.** Claude's login and settings, `~/.claude` and `~/.claude.json`, are mounted from `home/euler-claude` in this repo, shared by every project and session, so you don't have to log in again for each session or project. Your actual `~/.gitconfig`, if you have one, is mounted read-only so commits made in the container use your git identity. The rest of the home directory is part of the project's overlay image (below).
-- **No piles of small files on the remote file system.** Changes to the container's own file system, including the home directory, e.g. `apt-get`, `npm -g` or `pip install --user` installs, packages added to the image's Python environment in `/opt/venv`, or caches, go to a persistent overlay image `.euler-vibe/overlays/euler-claude.img` in the project. That is a single (sparse) ext3 file, rather than the many thousands of small files such installs would otherwise create on `/cluster/project` or `/cluster/work`, which are slow there and count against the file quota. It is created automatically on first use with a size of `$EUVIBE_OVERLAY_SIZE` (in GiB, or with an `M`/`G`/`T` suffix; default 50). Delete it to start from a clean image. (The project directory, `~/.claude` and `~/.claude.json` are bind mounts, so writes there go straight to the host as usual.)
-- **Images stay in sync with their definition.** If the `.def` next to an image has changed since the image was built (compared with the copy of the `.def` kept in the `.sif`), the image is rebuilt before starting.
+- **No piles of small files on the remote file system.** Changes to the container's own file system, including the home directory, e.g. `apt-get`, `npm -g` or `pip install --user` installs, packages added to the image's Python environment in `/opt/venv`, or caches, go to a persistent overlay image `.euler-vibe/overlays/euler-claude.img` in the project. That is a single (sparse) ext3 file, rather than the many thousands of small files such installs would otherwise create on `/cluster/project` or `/cluster/work`, which are slow there and count against the file quota. For example, Boltz-2 downloads ~8 GB of weights and chemical component data in ~45k files on first use; in [`example/`](example/) those go to `~/.boltz` inside the overlay instead of the project directory. The overlay is created automatically on first use with a size of `$EUVIBE_OVERLAY_SIZE` (in GiB, or with an `M`/`G`/`T` suffix; default 50). Delete it to start from a clean image. (The project directory, `~/.claude` and `~/.claude.json` are bind mounts, so writes there go straight to the host as usual.)
+- **Images stay in sync with their definition.** If the `.def` next to an image has changed since the image was built (compared with the copy of the `.def` kept in the `.sif`), the image is rebuilt before starting. Edit [`example/.euler-vibe/sandboxes/euler-claude.def`](example/.euler-vibe/sandboxes/euler-claude.def) and the next `euler-claude` in `example/` rebuilds `euler-claude.sif` next to it.
 - **Agents survive a dropped connection.** Claude runs inside tmux, one session per directory, so you can detach, log out and reattach later (on the same node; with euler-tunnel, `ssh euler-tunnel` gets you back to it).
-- **GPUs are available** via `--nv`; Claude's auto-updater is disabled since the image is read-only.
+- **GPUs are available** via `--nv`, e.g. for the Boltz-2 run in [`example/`](example/); Claude's auto-updater is disabled since the image is read-only.
 
 ### Per-project configuration in `.euler-vibe/`
 
-All optional, in the directory you start `euler-claude` from:
+All optional, in the directory you start `euler-claude` from. [`example/`](example/) uses all of them:
 
 | Path | Purpose |
 | --- | --- |
@@ -45,11 +45,11 @@ All optional, in the directory you start `euler-claude` from:
 | `.euler-vibe/sandboxes/euler-claude.def` | Definition the project image is built (and rebuilt) from |
 | `.euler-vibe/overlays/euler-claude.img` | Persistent overlay image, created automatically |
 
-Example [`.euler-vibe/mounts`](example/.euler-vibe/mounts), making the group's shared data available read-only:
+[`example/.euler-vibe/mounts`](example/.euler-vibe/mounts) makes the group's shared data available read-only:
 ```
-/cluster/work/beltrao/shared::ro             # empty dst: same path inside
+/cluster/project/alphafold/alphafold3::ro    # empty dst: same path inside
 /cluster/project/beltrao/shared::ro
-/cluster/project/alphafold/alphafold3::ro
+/cluster/work/beltrao/shared::ro
 ```
 Other forms:
 ```
@@ -59,9 +59,35 @@ ${DATA}/*.parquet::ro                        # one mount per match
 ```
 `$VAR` and `${VAR}` are taken from the environment, `~` is your home, relative paths are relative to the project directory. Every listed path must exist (globs may match nothing), and mistakes are reported before the tmux session starts.
 
-A mount alone doesn't tell the agent what is in it. [`example/AGENTS.md`](example/AGENTS.md) describes the three directories above (layout, file formats, what not to do with them); copy the relevant sections into the project's own `AGENTS.md`/`CLAUDE.md`. Running `euler-claude` in [`example/`](example/) starts a session with both in place, using a project image built from [`example/.euler-vibe/sandboxes/euler-claude.def`](example/.euler-vibe/sandboxes/euler-claude.def) (a copy of the standard one, to edit as a starting point).
+A mount alone doesn't tell the agent what is in it. [`example/AGENTS.md`](example/AGENTS.md) describes the three directories above (layout, file formats, what not to do with them), as well as what is installed in the container and how to use it; copy the relevant sections into the project's own `AGENTS.md`/`CLAUDE.md`.
 
-Add `.euler-vibe/overlays/` (and `.euler-vibe/sandboxes/*.sif`) to the project's `.gitignore`.
+[`example/.euler-vibe/sandboxes/euler-claude.def`](example/.euler-vibe/sandboxes/euler-claude.def) is the standard [`sandboxes/euler-claude.def`](sandboxes/euler-claude.def) with a block of project-specific additions: Boltz-2 in its own venv with `boltz` on `PATH`, and `gemmi` and `rdkit` in the default Python. To start a project image of your own, copy the standard `.def` into `.euler-vibe/sandboxes/` and add to it.
+
+Add `.euler-vibe/overlays/` and `.euler-vibe/sandboxes/*.sif` to the project's `.gitignore`, as in [`example/.gitignore`](example/.gitignore).
+
+## Example: Boltz-2 on ABL1 + imatinib
+
+[`example/`](example/) started out with only the mounts, `AGENTS.md` and the standard `.def`. Claude was asked to
+
+> Set up boltz2 in this container an run a small example, e.g. imatinib into ABL1
+
+Following `AGENTS.md`, Claude used the group's precomputed AlphaFold 3 MSA for ABL1 instead of an MSA server. It cropped the MSA to the kinase domain ([`scripts/crop_af3_msa.py`](example/scripts/crop_af3_msa.py)), predicted the complex with 5 samples and affinity, and compared the models with crystal structure 2HYY from the AF3 PDB copy ([`scripts/compare_to_xtal.py`](example/scripts/compare_to_xtal.py)). [`abl1_imatinib/run.sh`](example/abl1_imatinib/run.sh) reruns all three steps. On one RTX 4090 it takes ~4 minutes:
+
+| | |
+| --- | --- |
+| Confidence (best model) | confidence 0.956, ipTM 0.982, ligand ipTM 0.982, pLDDT 0.949 |
+| Affinity | binder probability 0.73, predicted IC50 ~80 nM (measured: ~10-600 nM) |
+| vs. crystal 2HYY (263 CA pairs) | protein CA RMSD 0.58-0.64 Å, ligand RMSD 0.31-0.56 Å |
+
+ABL1-imatinib structures are in Boltz-2's training data, so this checks the setup rather than benchmarking the model.
+
+The first attempt installed Boltz into a venv in the project directory, which ran into the following problems:
+- Triton failed to compile its GPU kernels because the system Python has no `Python.h`.
+- The venv and Boltz cache added ~15 GB in ~85k files to `/cluster/project`.
+- The shared Boltz-2 weights turned out to be in AF3 format, so native Boltz couldn't load them.
+- The local PDB mirror was incomplete.
+
+These lessons are now in the project's `.def` (Boltz on a uv-managed Python, in the image) and in `AGENTS.md` (where the cache goes, which shared data does and doesn't work), so the next session starts from there.
 
 ## Other scripts
 

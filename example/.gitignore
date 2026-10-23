@@ -1,0 +1,12 @@
+# euler-claude: built project image and persistent overlay
+.euler-vibe/overlays/
+.euler-vibe/sandboxes/*.sif
+
+# Outputs of abl1_imatinib/run.sh
+abl1_imatinib/*.a3m
+abl1_imatinib/boltz_results_*/
+
+# Boltz installed into the project directory by hand, before it was in the image
+.venv/
+.uv-python/
+boltz_cache/

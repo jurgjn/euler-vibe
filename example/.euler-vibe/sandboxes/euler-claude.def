@@ -69,6 +69,25 @@ From: nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
 
     /opt/venv/bin/python -c "import sys, torch; print(sys.version, torch.__version__)"
 
+    # --- Project-specific additions (not in the standard euler-claude.def) ---
+
+    # Boltz-2 needs Python <3.13, so it gets its own venv on a uv-managed
+    # Python 3.12 in /opt/python. Unlike the system python3, that ships
+    # Python.h, which Triton needs to compile its GPU kernels at runtime.
+    # Weights and CCD data are downloaded on first use to ~/.boltz, which is
+    # in the project's overlay image.
+    uv python install 3.12 --no-bin
+    chmod -R a+rX /opt/python
+    uv venv /opt/boltz --python 3.12 --managed-python
+    uv pip install --python /opt/boltz/bin/python "boltz[cuda]"
+    ln -s /opt/boltz/bin/boltz /usr/local/bin/boltz
+    /opt/boltz/bin/python -c "import boltz, torch; print(torch.__version__)"
+
+    # Structure handling for comparing models to crystal structures
+    uv pip install --python /opt/venv/bin/python \
+        gemmi \
+        rdkit
+
     # Install Claude Code globally via npm. --prefix /usr/local puts the
     # `claude` command in /usr/local/bin instead of inside the pixi env,
     # where pixi wouldn't expose it on PATH
@@ -129,5 +148,5 @@ From: nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
     exec claude "$@"
 
 %labels
-    Description Claude Code CLI (+python packages) in a container for HPC use
+    Description Claude Code CLI (+python packages, Boltz-2) in a container for HPC use
     BuildCommand apptainer build --force euler-claude.sif euler-claude.def
