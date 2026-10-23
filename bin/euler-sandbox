@@ -13,6 +13,11 @@
 #
 # --update-image <image.sif> (re)builds image.sif from image.def next to it if
 # the image is missing or was built from a different .def, see update_image.
+#
+# --overlay-image <file.img> keeps writes outside of bind mounts (e.g. to /usr
+# or /opt) in a persistent overlay image instead of the throwaway directory;
+# it is created if missing, see create_overlay_image.
+#
 # Without a singularity subcommand, the script exits after these checks.
 #
 
@@ -20,7 +25,7 @@ set -euo pipefail
 
 usage() {
     echo "Usage: $(basename "$0") [--home <src[:dst]>] <singularity-subcommand> [args...]" >&2
-    echo "       $(basename "$0") [--check-mounts] [--update-image <image.sif>]" >&2
+    echo "       $(basename "$0") [--check-mounts] [--update-image <image.sif>] [--overlay-image <file.img>]" >&2
     echo "  e.g.: $(basename "$0") exec my_container.sif echo hello" >&2
     exit 1
 }
@@ -125,9 +130,49 @@ update_image() {
     exec 9<&-
 }
 
+# Create the overlay image $1 if it doesn't exist yet, with a size of
+# $EUVIBE_OVERLAY_SIZE: a number of GiB, or a number with an M, G or T suffix
+# (default 50G). The image is sparse, so it only takes up the space actually
+# written to it. It is created under a temporary name first, so a failed or
+# concurrent creation never leaves a half-made image behind.
+create_overlay_image() {
+    local img=$1 size=${EUVIBE_OVERLAY_SIZE:-50G} mib
+    [[ -e "$img" ]] && return 0
+    if [[ ! "$size" =~ ^([0-9]+)([MmGgTt]?)$ ]]; then
+        echo "EUVIBE_OVERLAY_SIZE=$size: expected a number of GiB, or e.g. 500M, 50G, 1T" >&2
+        return 1
+    fi
+    case ${BASH_REMATCH[2]} in
+        M|m) mib=${BASH_REMATCH[1]} ;;
+        G|g|"") mib=$((BASH_REMATCH[1] * 1024)) ;;
+        T|t) mib=$((BASH_REMATCH[1] * 1024 * 1024)) ;;
+    esac
+
+    echo "Creating overlay image $img (${mib} MiB, sparse)" >&2
+    mkdir -p "$(dirname "$img")"
+    overlay_tmp="$img.create.$$"
+    trap 'rm -f "$overlay_tmp"' EXIT
+    singularity overlay create --sparse --size "$mib" "$overlay_tmp" >&2
+    # upper/ becomes the container's /, and overlay create makes it 0777;
+    # tools such as Claude Code refuse a world-writable /. Fix it in place
+    # (debugfs edits the ext3 image without mounting it), then check.
+    PATH=$PATH:/usr/sbin:/sbin debugfs -w -R 'set_inode_field /upper mode 040755' \
+        "$overlay_tmp" 2>/dev/null
+    if ! PATH=$PATH:/usr/sbin:/sbin debugfs -R 'stat /upper' "$overlay_tmp" 2>/dev/null |
+            grep -q 'Mode: *0755'; then
+        echo "could not set the mode of /upper in $overlay_tmp to 0755" >&2
+        return 1
+    fi
+    # If another launch got there first, keep its image
+    mv -n "$overlay_tmp" "$img" 2>/dev/null || [[ -e "$img" ]]
+    rm -f "$overlay_tmp"
+    trap - EXIT
+}
+
 home=
 check_mounts=
 image=
+overlay_image=
 while [[ "${1:-}" == --* ]]; do
     case "$1" in
         --home)
@@ -152,6 +197,15 @@ while [[ "${1:-}" == --* ]]; do
             image=${1#--update-image=}
             shift
             ;;
+        --overlay-image)
+            (( $# >= 2 )) || usage
+            overlay_image=$2
+            shift 2
+            ;;
+        --overlay-image=*)
+            overlay_image=${1#--overlay-image=}
+            shift
+            ;;
         *)
             usage
             ;;
@@ -162,7 +216,10 @@ read_project_mounts
 if [[ -n "$image" ]]; then
     update_image "$image"
 fi
-if (( $# == 0 )) && [[ -n "$check_mounts$image" ]]; then
+if [[ -n "$overlay_image" ]]; then
+    create_overlay_image "$overlay_image"
+fi
+if (( $# == 0 )) && [[ -n "$check_mounts$image$overlay_image" ]]; then
     exit 0
 fi
 
@@ -190,7 +247,7 @@ opts=(
     --cleanenv
     --containall
     --home "$home"
-    --overlay "$overlay_dir"/overlay
+    --overlay "${overlay_image:-$overlay_dir/overlay}"
     --bind "$overlay_dir"/tmp:/tmp
 )
 # --home src is the same as src:src; don't mount $PWD twice if it is home

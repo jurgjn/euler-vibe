@@ -51,6 +51,10 @@ as in sandboxes/euler-qwen27b.def:
 Either image is (re)built when a new pi window is created if the .def next to
 it (euler-qwen27b.def) has changed since the image was built; a project can
 also bring just .euler-vibe/euler-qwen27b.def.
+
+Writes to the container's root filesystem (e.g. apt-get or npm -g installs)
+persist in .euler-vibe/overlays/euler-qwen27b.img, created if missing with a
+size of \$EUVIBE_OVERLAY_SIZE (GiB, default 50).
 EOF
 }
 
@@ -161,6 +165,12 @@ pi_image() {
     fi
 }
 
+# Print the persistent overlay image for this project. Named after the script
+# itself, not a symlink to it, so it is the same inside and outside tmux.
+pi_overlay_image() {
+    echo "$PWD/.euler-vibe/overlays/$(basename "$(realpath "$0")").img"
+}
+
 # Entry point for `euler-qwen27b [args]`: create the per-directory window if
 # needed, then attach to it.
 cmd_pi() {
@@ -178,9 +188,10 @@ cmd_pi() {
             echo "Resumed existing window '$name'; ignored arguments: $*" >&2
         fi
     else
-        # Rebuild here rather than in the window, so the build's output stays
-        # in the terminal
-        "$EUVIBE_DIR/bin/euler-sandbox" --update-image "$(pi_image)"
+        # Rebuild the image and create the overlay here rather than in the
+        # window, so their output stays in the terminal
+        "$EUVIBE_DIR/bin/euler-sandbox" --update-image "$(pi_image)" \
+            --overlay-image "$(pi_overlay_image)"
 
         host_git_ident AUTHOR
         host_git_ident COMMITTER
@@ -253,7 +264,8 @@ EOF
 
     # euler-sandbox adds the throwaway /tmp + overlay and .euler-vibe/mounts;
     # $PWD is mounted as home
-    "$EUVIBE_DIR/bin/euler-sandbox" --home "$PWD:$PWD" run \
+    "$EUVIBE_DIR/bin/euler-sandbox" --home "$PWD:$PWD" \
+        --overlay-image "$(pi_overlay_image)" run \
         --nv \
         --env EUVIBE_MODEL="$EUVIBE_MODEL" \
         --env OPENAI_BASE_URL="$OPENAI_BASE_URL" \

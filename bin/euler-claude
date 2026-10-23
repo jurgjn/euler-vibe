@@ -13,6 +13,9 @@
 #   exec)
 # - Either image is (re)built first if a .def next to it (euler-claude.def)
 #   has changed since the image was built, see euler-sandbox --update-image
+# - .euler-vibe/overlays/euler-claude.img in $PWD - persistent overlay over the
+#   image's root filesystem (e.g. for apt-get/npm -g installs), created if
+#   missing with a size of $EUVIBE_OVERLAY_SIZE (GiB, default 50)
 # - Arguments are passed to singularity exec, e.g. --bind /some/dir
 #
 # TODO:
@@ -78,9 +81,11 @@ CLAUDE_IMAGE=$EUVIBE_DIR/sandboxes/euler-claude.sif
 if [[ -f "$PWD/.euler-vibe/euler-claude.sif" || -f "$PWD/.euler-vibe/euler-claude.def" ]]; then
     CLAUDE_IMAGE=$PWD/.euler-vibe/euler-claude.sif
 fi
-# Check .euler-vibe/mounts and rebuild the image here rather than in the tmux
-# window, which would close without a trace on errors
-"$EUVIBE_DIR/bin/euler-sandbox" --check-mounts --update-image "$CLAUDE_IMAGE"
+OVERLAY_IMAGE=$PWD/.euler-vibe/overlays/$SCRIPT_NAME.img
+# Check .euler-vibe/mounts, rebuild the image and create the overlay here
+# rather than in the tmux session, which would close without a trace on errors
+"$EUVIBE_DIR/bin/euler-sandbox" --check-mounts --update-image "$CLAUDE_IMAGE" \
+    --overlay-image "$OVERLAY_IMAGE"
 if [[ ! -f "$CLAUDE_IMAGE" ]]; then
     echo "image not found: $CLAUDE_IMAGE" >&2
     exit 1
@@ -93,6 +98,7 @@ chmod 700 "$CLAUDE_HOME"
 # .euler-vibe/mounts
 CMD=(
     "$EUVIBE_DIR/bin/euler-sandbox" --home "$CLAUDE_HOME:$HOME"
+    --overlay-image "$OVERLAY_IMAGE"
     exec
     --nv
     "$@"
