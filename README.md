@@ -1,5 +1,5 @@
 # euler-vibe
-An attempt at sandboxing coding agents on euler with singularity/apptainer. No guarantees, use at your own risk! There's unrestricted access to network/GPU, please use accordingly and/or adjust as needed. On purpose, there is no access to euler's Slurm, so the agent can't submit or manage jobs. Also on purpose, by default the agent can't see any configuration in your home directory, such as SSH keys or other secrets; the only exception is `~/.gitconfig`, which is mounted read-only so that commits made by the agent use your name and email as author.
+An attempt at sandboxing coding agents on euler with singularity/apptainer, for now mostly focused on Claude Code. No guarantees, use at your own risk! There's unrestricted access to network/GPU, please use accordingly and/or adjust as needed. On purpose, there is no access to euler's Slurm, so the agent can't submit or manage jobs. Also on purpose, by default the agent can't see any configuration in your home directory, such as SSH keys or other secrets; the only exception is `~/.gitconfig`, which is mounted read-only so that commits made by the agent use your name and email as author.
 
 ## Install
 
