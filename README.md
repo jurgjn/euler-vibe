@@ -96,5 +96,6 @@ These lessons are now in the project's `.def` (Boltz on a uv-managed Python, in 
 - [`claude-mobile`](bin/claude-mobile), [`claude-launch`](bin/claude-launch): an earlier Claude Code setup, with an interactive launcher and [Happy](https://github.com/slopus/happy) for remote control
 
 ## See also
+- https://github.com/evocellnet/ai-hackathon - notes from the group's AI hackathon: setting up euler, the group's shared data, requesting a GPU node, and options for running Claude Code sandboxed on euler
 - https://github.com/DennisGankin/vibe-tunnel - VS Code and Claude Code in an apptainer container in a Slurm job on euler, opened from your laptop through a VS Code tunnel
 - https://github.com/juliabuhmann/euler_agents - Claude Code in a singularity container on euler with only explicitly mounted directories, interactively in tmux or as unattended Slurm batch jobs that write a report
