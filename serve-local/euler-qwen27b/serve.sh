@@ -81,8 +81,10 @@ ARGS=(
     --disable-custom-all-reduce
 
     # Text only: never load the vision encoder, leaving its memory to the KV
-    # cache; image requests are rejected (models.json tells pi as much)
-    --language-model-only
+    # cache; image requests are rejected (models.json tells pi as much).
+    # --language-model-only rejects Qwen3_5ForConditionalGeneration, but the
+    # model honours the same setting declared in its config
+    --json-model-override-args '{"language_model_only": true}'
 
     # Explicit rather than relying on chat-template auto-detection
     --reasoning-parser qwen3
