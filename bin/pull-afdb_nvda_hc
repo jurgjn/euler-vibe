@@ -43,13 +43,13 @@ Examples
     # Run from the directory the download should go to (or pass --out DIR)
 
     # Metadata + manifests only; prints counts and the number of tars involved
-    download-afdb_nvda_hc --dry-run
+    pull-afdb_nvda_hc --dry-run
 
     # Small end-to-end test on 3 archives
-    download-afdb_nvda_hc --limit-tars 3
+    pull-afdb_nvda_hc --limit-tars 3
 
     # Full run (safe to interrupt and restart)
-    download-afdb_nvda_hc --workers 4
+    pull-afdb_nvda_hc --workers 4
 """
 
 from __future__ import annotations
