@@ -46,6 +46,9 @@ ARGS=(
     # unallocated" memory (0.57 GiB in an OOM at --mem-fraction-static 0.88)
     --env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     --env CUDA_VISIBLE_DEVICES=$EUVIBE_GPUS
+    # The image's runscript otherwise re-quotes and evals the arguments, which
+    # strips the double quotes inside --json-model-override-args
+    --env SINGULARITY_NO_EVAL=1
 
     # Like vLLM, SGLang uses high-performance Inter-Process Communication (IPC) for Multi-GPU configurations. Apptainer restricts access to /dev/shm on cluster nodes unless cleanly bound.
     #--bind /dev/shm:/dev/shm
