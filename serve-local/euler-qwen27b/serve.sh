@@ -63,22 +63,30 @@ ARGS=(
     --model-path $EUVIBE_MODEL
     --served-model-name $EUVIBE_SERVED_MODEL_NAME
 
-    # 2x rtx_4090 (TP=2): ~14.7 GiB/GPU of weights (incl. the MTP head) leaves
-    # room for one session at full context, so trade concurrency for context length
+    # 2x rtx_4090 (TP=2): 13.8 GiB/GPU of weights (incl. the MTP head) leaves
+    # room for one session at long context, so trade concurrency for context length
     --max-running-requests 1
     --context-length $EUVIBE_CONTEXT_LENGTH
     # Needed for 262144: only 16/64 layers are full attention, so the fp8 KV
     # cache is ~4 GiB/GPU at full context (bf16 would be ~8 GiB and not fit)
     --kv-cache-dtype fp8_e4m3
 
-    # Weights + KV cache; the rest is headroom for CUDA context, NCCL,
-    # activations and CUDA graphs (0.88 ran out of memory in the forward pass)
-    --mem-fraction-static 0.84
+    # Linear-attention (mamba) state slots: 5 per running request with the
+    # extra-buffer radix cache, plus one cached prefix. Left unset, sglang
+    # gives mamba state ~half the memory left after weights (0.9:1 vs KV),
+    # which with MTP held the KV cache to 102685 tokens
+    --max-mamba-cache-size 6
+
+    # Weights + KV + mamba state; the rest is headroom for CUDA context, NCCL,
+    # activations and decode graphs. 0.84 was the limit with prefill graphs
+    # (1.8 GiB outside this fraction; 0.88 ran out of memory in the forward pass)
+    --mem-fraction-static 0.90
     # Smaller prefill chunks keep activation peaks within that headroom
     --chunked-prefill-size 4096
+    # Prefill graphs cost 1.8 GiB/GPU; spend it on KV cache instead
+    --disable-prefill-cuda-graph
     # Only capture graphs for batch sizes we can actually reach
     --cuda-graph-max-bs-decode 1
-    --cuda-graph-max-bs-prefill 2048
 
     # PCIe 4090s: custom allreduce is unsupported anyway; silences the warning
     --disable-custom-all-reduce
