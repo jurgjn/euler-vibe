@@ -1,0 +1,725 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = [
+#     "duckdb>=1.1",
+#     "requests>=2.31",
+#     "zstandard>=0.22",
+# ]
+# ///
+"""
+Download the high-confidence subset of the NVIDIA / AlphaFold DB dimer release.
+
+Source: https://ftp.ebi.ac.uk/pub/databases/alphafold/collaborations/nvda/
+
+Step 1  Download homodimer_metadata.csv (~6.0 GB), heterodimer_metadata.csv
+        (~2.5 GB) and README.txt. Downloads resume after interruption.
+
+Step 2  Select models that pass the high-confidence criterion from the latest
+        bioRxiv version of Han et al., "AlphaFold Database expands to
+        proteome-scale quaternary structures", doi:10.64898/2026.03.27.714458:
+
+            ipSAE_max   = max(ipSAE_AB,   ipSAE_BA)   >= 0.60   and
+            pDockQ2_max = max(pDockQ2_AB, pDockQ2_BA) >= 0.23
+
+        Both directional scores are read from the metadata and the max is taken
+        here, identically for homo- and heterodimers. Rows with a missing or
+        non-finite score are rejected. One Parquet manifest per complex type is
+        written, containing every original metadata column plus the derived
+        scores, AFDB's confidence label, the tar URL and the output path.
+
+Step 3  For each tar archive that holds selected models, walk the tar's 512-byte
+        headers with HTTP range requests and fetch only the selected members
+        (AF-<id>-model_v1.cif.zst). Nothing else is downloaded. Walk progress is
+        cached per tar, so an interrupted run resumes mid-archive, and re-runs
+        skip files that already exist.
+
+Dependencies are declared in the inline metadata block at the top of this file
+(PEP 723), so `uv run` installs them into a cached, isolated environment on
+first use; nothing needs to be installed by hand. Without uv:
+`pip install duckdb requests zstandard` and run it with python as usual.
+
+Examples
+    # Metadata + manifests only; prints counts and the number of tars involved
+    uv run afdb_nvda_hc_download.py --out ./afdb_nvda_hc --dry-run
+
+    # Small end-to-end test on 3 archives
+    uv run afdb_nvda_hc_download.py --out ./afdb_nvda_hc --limit-tars 3
+
+    # Full run (safe to interrupt and restart)
+    uv run afdb_nvda_hc_download.py --out ./afdb_nvda_hc --workers 4
+
+    # Or make it executable once and call it directly (the shebang uses uv)
+    chmod +x afdb_nvda_hc_download.py && ./afdb_nvda_hc_download.py --out ./afdb_nvda_hc
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import random
+import re
+import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+import duckdb
+import requests
+
+try:
+    import zstandard
+except ImportError:  # verification falls back to a magic-number check
+    zstandard = None
+
+BASE_URL = "https://ftp.ebi.ac.uk/pub/databases/alphafold/collaborations/nvda"
+# complex type -> (metadata file, archive directory on the FTP)
+SOURCES = {
+    "homodimer": ("homodimer_metadata.csv", "homodimers"),
+    "heterodimer": ("heterodimer_metadata.csv", "heterodimers"),
+}
+README_NAME = "README.txt"
+REQUIRED_COLUMNS = ["modelEntityId", "ipSAE_AB", "ipSAE_BA",
+                    "pDockQ2_AB", "pDockQ2_BA", "local_tar_name"]
+
+# Latest preprint version: joint cutoff on direction-maximised scores.
+IPSAE_MIN = 0.60
+PDOCKQ2_MIN = 0.23
+
+MEMBER_SUFFIX = "-model_v1.cif.zst"
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+BLOCK = 512
+ZERO_BLOCK = b"\0" * BLOCK
+RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
+
+log = logging.getLogger("afdb_nvda_hc")
+STOP = threading.Event()
+_tls = threading.local()
+
+
+# --------------------------------------------------------------------------- #
+# HTTP helpers
+# --------------------------------------------------------------------------- #
+class Counter:
+    def __init__(self):
+        self.lock, self.value = threading.Lock(), 0
+
+    def incr(self) -> None:
+        with self.lock:
+            self.value += 1
+
+
+REQUESTS = Counter()  # range requests issued, for progress reporting
+
+
+class TarNotFound(Exception):
+    """The metadata names a tar that the server does not have (HTTP 404)."""
+
+
+class RateLimiter:
+    """Global cap on requests per second across all threads (0 = unlimited)."""
+
+    def __init__(self, per_second: float):
+        self.interval = 1.0 / per_second if per_second > 0 else 0.0
+        self.lock = threading.Lock()
+        self.next_at = 0.0
+
+    def wait(self) -> None:
+        if not self.interval:
+            return
+        with self.lock:
+            now = time.monotonic()
+            at = max(now, self.next_at)
+            self.next_at = at + self.interval
+        if at > now:
+            time.sleep(at - now)
+
+
+LIMITER = RateLimiter(0)
+
+
+def _session() -> requests.Session:
+    """One keep-alive session per thread: tar walks are thousands of tiny requests."""
+    s = getattr(_tls, "session", None)
+    if s is None:
+        s = requests.Session()
+        s.headers.update({"User-Agent": "afdb-nvda-hc-download/1.0",
+                          "Accept-Encoding": "identity"})
+        _tls.session = s
+    return s
+
+
+def _reset_session() -> None:
+    s = getattr(_tls, "session", None)
+    if s is not None:
+        s.close()
+    _tls.session = None
+
+
+def _backoff(attempt: int, cap: float = 120.0) -> None:
+    time.sleep(min(cap, 2.0 ** attempt) * (0.5 + random.random() / 2))
+
+
+def get_range(url: str, start: int, length: int, *, retries: int,
+              timeout: float) -> bytes | None:
+    """Return bytes [start, start+length) of url; shorter at EOF; None if past EOF."""
+    end = start + length - 1
+    for attempt in range(retries):
+        if STOP.is_set():
+            raise KeyboardInterrupt
+        LIMITER.wait()
+        REQUESTS.incr()
+        try:
+            r = _session().get(url, headers={"Range": f"bytes={start}-{end}"},
+                               stream=True, timeout=timeout)
+            if r.status_code == 206:
+                data = r.content  # bounded by the requested range
+                # A short body is legitimate only at EOF, where Content-Range says
+                # so. Anything else is a truncated transfer: retry, don't treat as EOF
+                # (which would end a tar walk early).
+                m = re.match(r"bytes (\d+)-(\d+)/", r.headers.get("Content-Range", ""))
+                if m is None or int(m.group(1)) != start:
+                    raise IOError(f"bad Content-Range {r.headers.get('Content-Range')!r}")
+                if len(data) != int(m.group(2)) - start + 1:
+                    raise IOError(f"truncated body: {len(data)} bytes")
+                return data
+            r.close()  # never read the body of a non-206 (a 200 is the whole tar)
+            if r.status_code == 416:
+                return None
+            if r.status_code == 404:
+                raise TarNotFound(url)
+            if r.status_code == 200:
+                raise RuntimeError(f"{url}: server ignored the Range header")
+            if r.status_code not in RETRY_STATUS:
+                raise RuntimeError(f"{url}: HTTP {r.status_code}")
+            error: Exception = IOError(f"HTTP {r.status_code}")
+        except (requests.RequestException, OSError) as exc:
+            error = exc
+        _reset_session()
+        if attempt == retries - 1:
+            raise RuntimeError(f"{url}: range {start}+{length} failed: {error}")
+        log.debug("retrying %s @%d after: %s", url, start, error)
+        _backoff(attempt)
+    raise AssertionError("unreachable")
+
+
+def get_exact(url: str, start: int, length: int, **kw) -> bytes:
+    data = get_range(url, start, length, **kw) if length else b""
+    if data is None or len(data) != length:
+        got = 0 if data is None else len(data)
+        raise RuntimeError(f"{url}: expected {length} bytes at {start}, got {got}")
+    return data
+
+
+def download_file(url: str, dest: Path, *, retries: int, timeout: float) -> None:
+    """Resumable download. Skips the file if the local copy matches the remote size
+    and validator (ETag / Last-Modified); restarts if the remote file changed."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.name + ".part")
+    vfile = dest.with_name(dest.name + ".validator")
+
+    head = None
+    for attempt in range(retries):
+        try:
+            head = _session().head(url, allow_redirects=True, timeout=timeout)
+            if head.status_code in RETRY_STATUS:
+                raise IOError(f"HTTP {head.status_code}")
+            head.raise_for_status()
+            break
+        except (requests.RequestException, OSError) as exc:
+            _reset_session()
+            if attempt == retries - 1:
+                raise RuntimeError(f"HEAD {url} failed: {exc}")
+            _backoff(attempt)
+    total = int(head.headers.get("Content-Length", -1))
+    validator = head.headers.get("ETag") or head.headers.get("Last-Modified") or ""
+    saved = vfile.read_text().strip() if vfile.exists() else ""
+
+    if dest.exists() and dest.stat().st_size == total and (saved == validator or not validator):
+        log.info("up to date: %s (%.2f GB)", dest.name, total / 1e9)
+        return
+    if dest.exists():
+        log.info("remote %s changed; re-downloading", dest.name)
+        dest.unlink()
+    pos = part.stat().st_size if part.exists() and saved == validator else 0
+    if pos == 0 and part.exists():
+        part.unlink()
+    vfile.write_text(validator)
+
+    log.info("downloading %s (%.2f GB)%s", url, total / 1e9,
+             f", resuming at {pos / 1e9:.2f} GB" if pos else "")
+    last_log = time.monotonic()
+    for attempt in range(retries):
+        headers = {}
+        if pos:
+            headers["Range"] = f"bytes={pos}-"
+            if validator:
+                headers["If-Range"] = validator
+        try:
+            with _session().get(url, headers=headers, stream=True, timeout=timeout) as r:
+                if r.status_code == 416 and pos == total:
+                    break
+                if r.status_code == 200:
+                    pos, mode = 0, "wb"
+                elif r.status_code == 206:
+                    mode = "ab"
+                else:
+                    if r.status_code in RETRY_STATUS:
+                        raise IOError(f"HTTP {r.status_code}")
+                    r.raise_for_status()
+                with open(part, mode) as fh:
+                    for chunk in r.iter_content(chunk_size=8 << 20):
+                        fh.write(chunk)
+                        pos += len(chunk)
+                        if time.monotonic() - last_log > 30:
+                            last_log = time.monotonic()
+                            log.info("  %s: %.2f / %.2f GB", dest.name, pos / 1e9, total / 1e9)
+            if total < 0 or pos >= total:
+                break
+        except (requests.RequestException, OSError) as exc:
+            _reset_session()
+            if attempt == retries - 1:
+                raise RuntimeError(f"download of {url} failed: {exc}")
+            log.warning("  %s interrupted at %.2f GB (%s); resuming", dest.name, pos / 1e9, exc)
+            _backoff(attempt)
+    if total >= 0 and part.stat().st_size != total:
+        raise RuntimeError(f"{dest.name}: size {part.stat().st_size} != {total}")
+    os.replace(part, dest)
+    log.info("done: %s", dest.name)
+
+
+# --------------------------------------------------------------------------- #
+# Selection
+# --------------------------------------------------------------------------- #
+def _lit(value) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _num(col: str) -> str:
+    # NULL for empty / unparsable / NaN / inf. DuckDB sorts NaN above every
+    # number, so without isfinite() a NaN score would pass ">= 0.6".
+    cast = f'TRY_CAST("{col}" AS DOUBLE)'
+    return f"CASE WHEN isfinite({cast}) THEN {cast} END"
+
+
+def select_models(csv_path: Path, ctype: str, subdir: str, manifest: Path,
+                  base_url: str, ipsae_min: float, pdockq2_min: float) -> dict:
+    con = duckdb.connect()
+    src = f"read_csv({_lit(csv_path)}, header=true, all_varchar=true)"
+    columns = [r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()]
+    missing = [c for c in REQUIRED_COLUMNS if c not in columns]
+    if missing:
+        raise SystemExit(f"{csv_path.name} lacks columns {missing}; the release schema may "
+                         f"have changed (see README.txt). Columns found: {columns}")
+
+    scored = f"""
+        SELECT *,
+            CASE WHEN starts_with(modelEntityId, 'AF-') THEN modelEntityId
+                 ELSE 'AF-' || modelEntityId END AS model_id,
+            greatest({_num('ipSAE_AB')}, {_num('ipSAE_BA')}) AS ipSAE_max,
+            greatest({_num('pDockQ2_AB')}, {_num('pDockQ2_BA')}) AS pDockQ2_max
+        FROM {src}"""
+    passes = f"ipSAE_max >= {ipsae_min!r} AND pDockQ2_max >= {pdockq2_min!r}"
+    has_tar = "coalesce(trim(local_tar_name), '') <> ''"
+    log.info("selecting %ss from %s ...", ctype, csv_path.name)
+    tmp = manifest.with_name(manifest.name + ".tmp")
+    con.execute(f"""
+        COPY (
+            SELECT {_lit(ctype)} AS complex_type, *,
+                CASE WHEN ipSAE_max >= 0.8 THEN 'very_high'
+                     WHEN ipSAE_max >= 0.7 THEN 'confident'
+                     WHEN ipSAE_max >= 0.6 THEN 'low'
+                     ELSE 'below_afdb_cutoff' END AS afdb_confidence_label,
+                {_lit(f'{base_url}/{subdir}/')} || CASE
+                    WHEN ends_with(trim(local_tar_name), '.tar') THEN trim(local_tar_name)
+                    ELSE trim(local_tar_name) || '.tar' END AS tar_url,
+                model_id || {_lit(MEMBER_SUFFIX)} AS member_name,
+                {_lit(subdir + '/')} || right(model_id, 3) || '/' || model_id
+                    || {_lit(MEMBER_SUFFIX)} AS rel_path
+            FROM ({scored})
+            WHERE {passes} AND {has_tar}
+        ) TO {_lit(tmp)} (FORMAT PARQUET, COMPRESSION ZSTD)""")
+    os.replace(tmp, manifest)
+
+    upstream = "passes_quality_threshold" in columns
+    flag = "lower(trim(passes_quality_threshold)) IN ('true', 't', '1', 'yes')"
+    extra = (f""", count(*) FILTER (WHERE {flag}) AS upstream_flag_pass,
+                   count(*) FILTER (WHERE {flag} AND ({passes})) AS upstream_flag_and_ours"""
+             if upstream else "")
+    row = con.execute(f"""
+        SELECT count(*) AS rows,
+               count(*) FILTER (WHERE ipSAE_max IS NOT NULL AND pDockQ2_max IS NOT NULL) AS scored,
+               count(*) FILTER (WHERE {passes}) AS passing,
+               count(*) FILTER (WHERE ({passes}) AND NOT {has_tar}) AS passing_without_tar,
+               count(*) FILTER (WHERE trim(local_tar_name) IN
+                    (SELECT DISTINCT trim(local_tar_name) FROM read_parquet({_lit(manifest)})))
+                    AS models_in_touched_tars
+               {extra}
+        FROM ({scored})""").fetchone()
+    names = ["rows", "scored", "passing", "passing_without_tar", "models_in_touched_tars"]
+    if upstream:
+        names += ["upstream_flag_pass", "upstream_flag_and_ours"]
+    summary = dict(zip(names, map(int, row)))
+    m = f"read_parquet({_lit(manifest)})"
+    summary["selected"] = int(con.execute(f"SELECT count(*) FROM {m}").fetchone()[0])
+    summary["tars"] = int(con.execute(f"SELECT count(DISTINCT tar_url) FROM {m}").fetchone()[0])
+    summary["by_label"] = dict(con.execute(
+        f"SELECT afdb_confidence_label, count(*) FROM {m} GROUP BY 1 ORDER BY 1").fetchall())
+    return summary
+
+
+# --------------------------------------------------------------------------- #
+# Tar walking and member extraction
+# --------------------------------------------------------------------------- #
+class TarIndex:
+    """Append-only record of walked headers: basename, data offset, size, next header
+    offset; a final '#END' line marks a fully walked tar. Lets an interrupted walk resume
+    where it stopped, and lets later runs fetch members found earlier without re-walking."""
+
+    def __init__(self, path: Path):
+        self.path, self.fh = path, None
+        self.entries: dict[str, tuple[int, int]] = {}
+        self.cursor, self.complete = 0, False
+        if path.exists():
+            raw = path.read_bytes()
+            if raw and not raw.endswith(b"\n"):          # torn final line from a crash
+                raw = raw[: raw.rfind(b"\n") + 1]
+                path.write_bytes(raw)
+            for line in raw.decode("utf-8", "replace").splitlines():
+                if line.startswith("#END"):
+                    self.complete = True
+                    continue
+                name, off, size, nxt = line.split("\t")
+                self.entries[name] = (int(off), int(size))
+                self.cursor = int(nxt)
+
+    def reset(self) -> None:
+        self.close()
+        self.path.unlink(missing_ok=True)
+        self.__init__(self.path)
+
+    def add(self, name: str, off: int, size: int, nxt: int) -> None:
+        if self.fh is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.fh = open(self.path, "a", buffering=1)
+        self.fh.write(f"{name}\t{off}\t{size}\t{nxt}\n")
+        self.entries[name] = (off, size)
+        self.cursor = nxt
+
+    def finish(self) -> None:
+        if self.fh is None:
+            self.fh = open(self.path, "a", buffering=1)
+        self.fh.write("#END\n")
+        self.complete = True
+
+    def close(self) -> None:
+        if self.fh is not None:
+            self.fh.close()
+            self.fh = None
+
+
+def _pad(n: int) -> int:
+    return (n + BLOCK - 1) // BLOCK * BLOCK
+
+
+def _tar_size(field: bytes) -> int:
+    if field[0] & 0x80:                       # GNU base-256 encoding
+        return int.from_bytes(field[1:], "big")
+    return int(field.strip(b"\0 ") or b"0", 8)
+
+
+def _checksum_ok(header: bytes) -> bool:
+    try:
+        stored = int(header[148:156].strip(b"\0 ") or b"0", 8)
+    except ValueError:
+        return False
+    body = header[:148] + b" " * 8 + header[156:]
+    signed = sum(b - 256 if b > 127 else b for b in body)
+    return stored in (sum(body), signed)
+
+
+def _pax_path(data: bytes) -> str | None:
+    for rec in data.decode("utf-8", "replace").split("\n"):
+        _, _, kv = rec.partition(" ")
+        if kv.startswith("path="):
+            return kv[5:]
+    return None
+
+
+class BadMember(Exception):
+    pass
+
+
+def save_member(data: bytes, dest: Path, *, decompress: bool, verify: bool) -> int:
+    if data[:4] != ZSTD_MAGIC:
+        raise BadMember("not a zstd frame")
+    out = data
+    if decompress or (verify and zstandard is not None):
+        # A fresh decompressor per call: zstandard objects are not thread-safe.
+        cif = zstandard.ZstdDecompressor().decompressobj().decompress(data)
+        if b"data_" not in cif[:65536]:
+            raise BadMember("decompressed member is not an mmCIF")
+        if decompress:
+            out = cif
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(f"{dest.name}.part{threading.get_ident()}")
+    tmp.write_bytes(out)
+    os.replace(tmp, dest)
+    return len(out)
+
+
+def process_tar(tar_url: str, items: list[tuple], args, ledger) -> dict:
+    """Fetch every wanted member of one tar. items: (member, rel_path, model_id, ctype)."""
+    res = {"downloaded": 0, "present": 0, "missing": 0, "errors": 0, "bytes": 0}
+    wanted: dict[str, tuple] = {}
+    for member, rel, model_id, ctype in items:
+        dest = args.out / "structures" / (rel[:-4] if args.decompress else rel)
+        if dest.exists():
+            res["present"] += 1
+        else:
+            wanted[member] = (dest, model_id, ctype)
+    if not wanted:
+        return res
+
+    http = {"retries": args.retries, "timeout": args.timeout}
+    parts = tar_url.rstrip("/").split("/")
+    index = TarIndex(args.out / "tar_index" / f"{parts[-2]}__{parts[-1]}.tsv")
+
+    def store(name: str, data: bytes) -> None:
+        dest, model_id, ctype = wanted[name]
+        n = save_member(data, dest, decompress=args.decompress, verify=args.verify)
+        del wanted[name]
+        res["downloaded"] += 1
+        res["bytes"] += n
+        ledger(model_id, ctype, tar_url, "downloaded")
+
+    try:
+        # 1) Members located by an earlier (possibly interrupted) walk.
+        for name in [n for n in wanted if n in index.entries]:
+            off, size = index.entries[name]
+            try:
+                store(name, get_exact(tar_url, off, size, **http))
+            except BadMember:
+                log.warning("stale index for %s; re-walking", tar_url)
+                index.reset()
+                break
+
+        # 2) Walk headers from the cursor until every wanted member is found.
+        off, prefetched, long_name = index.cursor, None, None
+        while wanted and not index.complete:
+            header = prefetched if prefetched is not None else get_range(tar_url, off, BLOCK, **http)
+            prefetched = None
+            if header is None or len(header) < BLOCK or header == ZERO_BLOCK:
+                index.finish()
+                break
+            if not _checksum_ok(header):
+                raise RuntimeError(f"corrupt tar header at byte {off}")
+            kind, size = header[156:157], _tar_size(header[124:136])
+            data_off = off + BLOCK
+            nxt = data_off + _pad(size)
+            if kind in (b"L", b"x"):            # GNU long name / pax extended header
+                ext = get_exact(tar_url, data_off, size, **http)
+                long_name = (ext.split(b"\0", 1)[0].decode("utf-8", "replace")
+                             if kind == b"L" else _pax_path(ext))
+                off = nxt
+                continue
+            if kind in (b"K", b"g"):            # long link name / pax global header
+                off = nxt
+                continue
+            name = long_name or header[:100].split(b"\0", 1)[0].decode("utf-8", "replace")
+            long_name = None
+            base = name.rsplit("/", 1)[-1]
+            index.add(base, data_off, size, nxt)
+            if base in wanted and kind in (b"0", b"\0", b"7"):
+                # Fetch the member and the next header in one request.
+                blob = get_range(tar_url, data_off, _pad(size) + BLOCK, **http)
+                if blob is None or len(blob) < size:
+                    raise RuntimeError(f"short read for {base}")
+                store(base, blob[:size])
+                tail = blob[_pad(size):_pad(size) + BLOCK]
+                prefetched = tail if len(tail) == BLOCK else None
+            off = nxt
+    except TarNotFound:
+        for name, (_, model_id, ctype) in wanted.items():
+            ledger(model_id, ctype, tar_url, "tar_not_found")
+        res["missing"] += len(wanted)
+        return res
+    except KeyboardInterrupt:
+        return res
+    except Exception as exc:  # keep going with other tars; a re-run retries this one
+        log.error("%s: %s", tar_url, exc)
+        for name, (_, model_id, ctype) in wanted.items():
+            ledger(model_id, ctype, tar_url, "error", str(exc))
+        res["errors"] += len(wanted)
+        return res
+    finally:
+        index.close()
+
+    for name, (_, model_id, ctype) in wanted.items():
+        ledger(model_id, ctype, tar_url, "member_not_in_tar")
+    res["missing"] += len(wanted)
+    return res
+
+
+def download_structures(manifests: list[Path], args) -> dict:
+    con = duckdb.connect()
+    files = "[" + ", ".join(_lit(m) for m in manifests) + "]"
+    rows = con.execute(f"""
+        SELECT tar_url, member_name, rel_path, model_id, complex_type
+        FROM read_parquet({files}, union_by_name=true)
+        ORDER BY tar_url, member_name""").fetchall()
+    by_tar: dict[str, list[tuple]] = {}
+    for tar_url, *item in rows:
+        by_tar.setdefault(tar_url, []).append(tuple(item))
+    tars = sorted(by_tar)
+    if args.limit_tars:
+        tars = tars[: args.limit_tars]
+    total_models = sum(len(by_tar[t]) for t in tars)
+    log.info("fetching %d models from %d tars with %d workers", total_models, len(tars), args.workers)
+
+    lock = threading.Lock()
+    ledger_fh = open(args.out / "ledger.jsonl", "a", buffering=1)
+
+    def ledger(model_id, ctype, tar_url, status, detail=None):
+        rec = {"model_id": model_id, "complex_type": ctype, "tar_url": tar_url,
+               "status": status, "time": int(time.time())}
+        if detail:
+            rec["detail"] = detail
+        with lock:
+            ledger_fh.write(json.dumps(rec) + "\n")
+
+    totals = {"downloaded": 0, "present": 0, "missing": 0, "errors": 0, "bytes": 0}
+    done, start, last = 0, time.monotonic(), 0.0
+    req0 = REQUESTS.value
+    pool = ThreadPoolExecutor(max_workers=args.workers)
+    futures = {pool.submit(process_tar, t, by_tar[t], args, ledger): t for t in tars}
+    try:
+        for fut in as_completed(futures):
+            for k, v in fut.result().items():
+                totals[k] += v
+            done += 1
+            now = time.monotonic()
+            if now - last > 30 or done == len(tars):
+                last = now
+                reqs = REQUESTS.value - req0
+                log.info("tars %d/%d | new %d, present %d, missing %d, errors %d | "
+                         "%.2f GB | %d requests (%.0f/s)", done, len(tars),
+                         totals["downloaded"], totals["present"], totals["missing"],
+                         totals["errors"], totals["bytes"] / 1e9, reqs, reqs / (now - start))
+    except KeyboardInterrupt:
+        log.warning("interrupted; finishing in-flight requests (re-run to resume)")
+        STOP.set()
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    pool.shutdown()
+    ledger_fh.close()
+    return totals
+
+
+# --------------------------------------------------------------------------- #
+# Main
+# --------------------------------------------------------------------------- #
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--out", type=Path, default=Path("."),
+                   help="output directory (default: the current directory)")
+    p.add_argument("--types", nargs="+", choices=list(SOURCES), default=list(SOURCES))
+    p.add_argument("--ipsae-min", type=float, default=IPSAE_MIN)
+    p.add_argument("--pdockq2-min", type=float, default=PDOCKQ2_MIN)
+    p.add_argument("--dry-run", action="store_true",
+                   help="download metadata and write manifests, but fetch no structures")
+    p.add_argument("--workers", type=int, default=4,
+                   help="tars processed in parallel (be polite to EBI; default 4)")
+    p.add_argument("--rate-limit", type=float, default=0,
+                   help="max HTTP requests per second across all workers (0 = no cap)")
+    p.add_argument("--limit-tars", type=int, default=0, help="only process the first N tars")
+    p.add_argument("--decompress", action="store_true",
+                   help="write .cif instead of .cif.zst (needs zstandard)")
+    p.add_argument("--no-verify", dest="verify", action="store_false",
+                   help="skip the full zstd decompression check of each member")
+    p.add_argument("--skip-metadata-refresh", action="store_true",
+                   help="use local metadata CSVs as-is without checking the server")
+    p.add_argument("--base-url", default=BASE_URL)
+    p.add_argument("--retries", type=int, default=12)
+    p.add_argument("--timeout", type=float, default=120)
+    p.add_argument("-v", "--verbose", action="store_true")
+    args = p.parse_args(argv)
+
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    if args.decompress and zstandard is None:
+        p.error("--decompress needs `pip install zstandard`")
+    if args.verify and zstandard is None:
+        log.warning("zstandard not installed: members are only checked for the zstd magic number")
+    global LIMITER
+    LIMITER = RateLimiter(args.rate_limit)
+    base = args.base_url.rstrip("/")
+    args.out.mkdir(parents=True, exist_ok=True)
+    meta_dir = args.out / "metadata"
+    http = {"retries": args.retries, "timeout": args.timeout}
+
+    # Step 1: metadata
+    names = [README_NAME] + [SOURCES[t][0] for t in args.types]
+    for name in names:
+        dest = meta_dir / name
+        if args.skip_metadata_refresh and dest.exists():
+            continue
+        download_file(f"{base}/{name}", dest, **http)
+
+    # Step 2: selection (cached unless inputs or thresholds change)
+    summary_path = args.out / "selection_summary.json"
+    cached = json.loads(summary_path.read_text()) if summary_path.exists() else {}
+    manifests, summary = [], {}
+    for ctype in args.types:
+        csv_name, subdir = SOURCES[ctype]
+        csv_path = meta_dir / csv_name
+        manifest = args.out / f"manifest_{ctype}.parquet"
+        st = csv_path.stat()
+        params = {"csv_bytes": st.st_size, "csv_mtime": int(st.st_mtime), "base_url": base,
+                  "ipsae_min": args.ipsae_min, "pdockq2_min": args.pdockq2_min}
+        prev = cached.get(ctype, {})
+        if manifest.exists() and prev.get("params") == params:
+            log.info("reusing %s", manifest.name)
+            summary[ctype] = prev
+        else:
+            summary[ctype] = {"params": params, **select_models(
+                csv_path, ctype, subdir, manifest, base, args.ipsae_min, args.pdockq2_min)}
+        manifests.append(manifest)
+        s = summary[ctype]
+        log.info("%s: %d of %d models pass (ipSAE_max >= %s, pDockQ2_max >= %s); %d tars; "
+                 "labels %s", ctype, s["selected"], s["rows"], args.ipsae_min,
+                 args.pdockq2_min, s["tars"], s["by_label"])
+        if "upstream_flag_pass" in s:
+            log.info("%s: upstream passes_quality_threshold=%d, agreeing with this selection: %d",
+                     ctype, s["upstream_flag_pass"], s["upstream_flag_and_ours"])
+        if s["passing_without_tar"]:
+            log.warning("%s: %d passing models have no local_tar_name and are skipped",
+                        ctype, s["passing_without_tar"])
+    summary_path.write_text(json.dumps({**cached, **summary}, indent=2) + "\n")
+
+    n_sel = sum(summary[t]["selected"] for t in args.types)
+    n_walk = sum(summary[t]["models_in_touched_tars"] for t in args.types)
+    log.info("total selected: %d models (~%.0f GB as .cif.zst at ~0.12 MB each). Tars holding "
+             "them contain %d models, an upper bound on header reads (homodimer chunk_ tars "
+             "also carry a .pdb.zst per model, roughly doubling that part).",
+             n_sel, n_sel * 0.12 / 1e3, n_walk)
+    if args.dry_run:
+        return 0
+
+    # Step 3: structures
+    try:
+        totals = download_structures(manifests, args)
+    except KeyboardInterrupt:
+        return 130
+    log.info("finished: %s", totals)
+    log.info("per-model outcomes are in %s", args.out / "ledger.jsonl")
+    return 1 if totals["errors"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
