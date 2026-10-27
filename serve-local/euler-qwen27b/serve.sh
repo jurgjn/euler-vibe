@@ -78,9 +78,13 @@ ARGS=(
     --max-mamba-cache-size 6
 
     # Weights + KV + mamba state; the rest is headroom for CUDA context, NCCL,
-    # activations and decode graphs. 0.84 was the limit with prefill graphs
-    # (1.8 GiB outside this fraction; 0.88 ran out of memory in the forward pass)
-    --mem-fraction-static 0.90
+    # activations and decode graphs. sglang sizes the KV cache while the MTP
+    # draft still holds its own embed_tokens and lm_head (2.4 GiB/GPU), then
+    # swaps them for the target's, so the real headroom is that much larger:
+    # 0.90 gave 191992 tokens and left 3.9 GiB/GPU free after startup. Each
+    # 0.01 is ~14k tokens. With prefill graphs (1.8 GiB outside this
+    # fraction), 0.88 ran out of memory in the forward pass
+    --mem-fraction-static 0.96
     # Smaller prefill chunks keep activation peaks within that headroom
     --chunked-prefill-size 4096
     # Prefill graphs cost 1.8 GiB/GPU; spend it on KV cache instead
