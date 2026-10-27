@@ -257,7 +257,7 @@ EOF
         --env OPENAI_API_KEY="$OPENAI_API_KEY" \
         --env TMPDIR=/tmp \
         "$image" \
-        --provider sglang --model "$EUVIBE_SERVED_MODEL_NAME" --thinking xhigh "$@"
+        --provider sglang --model "$EUVIBE_SERVED_MODEL_NAME" --thinking medium "$@"
 }
 
 # ---------------------------------------------------------------------------
