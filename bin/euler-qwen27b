@@ -51,9 +51,12 @@ Either image is (re)built when a new pi window is created if the .def next to
 it (euler-qwen27b.def) has changed since the image was built; a project can
 also bring just .euler-vibe/sandboxes/euler-qwen27b.def.
 
-Writes to the container's root filesystem (e.g. apt-get or npm -g installs)
-persist in .euler-vibe/overlays/euler-qwen27b.img, created if missing with a
-size of \$EUVIBE_OVERLAY_SIZE (GiB, default 50).
+pi's config (~/.pi) is mounted from home/euler-qwen27b in this repo, shared
+by all projects; ~/.gitconfig is mounted read-only from your actual home, if it
+exists. Other writes to the container's file system, including the rest of
+\$HOME (e.g. apt-get, npm -g or pip --user installs, caches), persist in
+.euler-vibe/overlays/euler-qwen27b.img, created if missing with a size of
+\$EUVIBE_OVERLAY_SIZE (GiB, default 50).
 EOF
 }
 
@@ -128,28 +131,6 @@ require_tmux() {
 }
 
 # ---------------------------------------------------------------------------
-# git identity
-# ---------------------------------------------------------------------------
-
-# host_git_ident <AUTHOR|COMMITTER>
-# Set GIT_<role>_NAME / GIT_<role>_EMAIL to the identity git on the host would
-# use in $PWD (env vars, repo config, global/XDG config, system config, in
-# git's own precedence). Leaves them empty if git can't determine one.
-# Needed because the container's $HOME is $PWD, so ~/.gitconfig is invisible.
-host_git_ident() {
-    local role=$1 ident name= email=
-    ident=$(git var "GIT_${role}_IDENT" 2>/dev/null) || ident=
-    if [[ -n "$ident" ]]; then
-        # Format: "Name <email> <timestamp> <tz>"
-        name=${ident%% <*}
-        email=${ident#*<}
-        email=${email%%>*}
-    fi
-    printf -v "GIT_${role}_NAME"  '%s' "$name"
-    printf -v "GIT_${role}_EMAIL" '%s' "$email"
-}
-
-# ---------------------------------------------------------------------------
 # pi
 # ---------------------------------------------------------------------------
 
@@ -187,13 +168,10 @@ cmd_pi() {
             echo "Resumed existing window '$name'; ignored arguments: $*" >&2
         fi
     else
-        # Rebuild the image and create the overlay here rather than in the
-        # window, so their output stays in the terminal
-        "$EUVIBE_DIR/bin/euler-sandbox" --update-image "$(pi_image)" \
+        # Check .euler-vibe/mounts, rebuild the image and create the overlay
+        # here rather than in the window, so their output stays in the terminal
+        "$EUVIBE_DIR/bin/euler-sandbox" --check-mounts --update-image "$(pi_image)" \
             --overlay-image "$(pi_overlay_image)"
-
-        host_git_ident AUTHOR
-        host_git_ident COMMITTER
 
         # Re-invoke this script inside tmux. Variables are passed explicitly
         # because a tmux server that is already running would otherwise give
@@ -210,10 +188,6 @@ cmd_pi() {
                   -e EUVIBE_TMUX_SESSION="$EUVIBE_TMUX_SESSION" \
                   -e EUVIBE_CONTEXT_LENGTH="$EUVIBE_CONTEXT_LENGTH" \
                   -e EUVIBE_PI_CONTEXT_WINDOW="$EUVIBE_PI_CONTEXT_WINDOW" \
-                  -e GIT_AUTHOR_NAME="$GIT_AUTHOR_NAME" \
-                  -e GIT_AUTHOR_EMAIL="$GIT_AUTHOR_EMAIL" \
-                  -e GIT_COMMITTER_NAME="$GIT_COMMITTER_NAME" \
-                  -e GIT_COMMITTER_EMAIL="$GIT_COMMITTER_EMAIL" \
                   "$inner")
     fi
 
@@ -231,49 +205,57 @@ cmd_pi_run() {
               read -r || true
           fi' EXIT
 
+    # pi's config dir (~/.pi/agent in the container), shared by all projects
+    local pi_home="$EUVIBE_DIR/home/euler-qwen27b"
+    local agent_dir="$pi_home/.pi/agent"
+    mkdir -p "$agent_dir"
+    chmod 700 "$pi_home"
+
     # stripJsonComments is Pi’s own small helper in utils/json.ts, not the npm package. Its docstring says it strips // line comments and trailing commas from JSON, leaving string literals untouched.
-    export PI_CODING_AGENT_DIR="$PWD/.config/pi/agent"
-    mkdir -p "$PI_CODING_AGENT_DIR"
     envsubst '
       $OPENAI_BASE_URL
       $OPENAI_API_KEY
       $EUVIBE_SERVED_MODEL_NAME
       $EUVIBE_PI_CONTEXT_WINDOW
     ' < "$EUVIBE_SERVE/models.template.jsonc" \
-    > "$PI_CODING_AGENT_DIR/models.json"
+    > "$agent_dir/models.json"
 
     # Copied verbatim (no envsubst): it refers to pi's own $PI_MODEL/$PI_PROVIDER
     if [[ -f "$EUVIBE_SERVE/APPEND_SYSTEM.md" ]]; then
-        cp "$EUVIBE_SERVE/APPEND_SYSTEM.md" "$PI_CODING_AGENT_DIR/APPEND_SYSTEM.md"
+        cp "$EUVIBE_SERVE/APPEND_SYSTEM.md" "$agent_dir/APPEND_SYSTEM.md"
     fi
 
-    settings="$PI_CODING_AGENT_DIR/settings.json"
+    local settings="$agent_dir/settings.json"
     if [[ ! -e "$settings" ]]; then
         cat > "$settings" <<'EOF'
 { "compaction": { "enabled": true, "reserveTokens": 49152, "keepRecentTokens": 20000 } }
 EOF
     fi
 
-    echo "$PI_CODING_AGENT_DIR/models.json":
-    cat "$PI_CODING_AGENT_DIR/models.json"
+    echo "$agent_dir/models.json":
+    cat "$agent_dir/models.json"
 
     local image
     image=$(pi_image)
     echo "Image: $image"
 
-    # euler-sandbox adds the throwaway /tmp + overlay and .euler-vibe/mounts;
-    # $PWD is mounted as home
-    "$EUVIBE_DIR/bin/euler-sandbox" --home "$PWD:$PWD" \
+    # Your git identity etc. for commits in the container, read-only
+    local gitconfig_mount=()
+    if [[ -f "$HOME/.gitconfig" ]]; then
+        gitconfig_mount=(--bind "$HOME/.gitconfig:$HOME/.gitconfig:ro")
+    fi
+
+    # euler-sandbox adds the throwaway /tmp and mounts $PWD and
+    # .euler-vibe/mounts; the rest of $HOME is part of the overlay
+    "$EUVIBE_DIR/bin/euler-sandbox" --no-home \
         --overlay-image "$(pi_overlay_image)" run \
         --nv \
+        --bind "$pi_home/.pi:$HOME/.pi" \
+        "${gitconfig_mount[@]}" \
         --env EUVIBE_MODEL="$EUVIBE_MODEL" \
         --env OPENAI_BASE_URL="$OPENAI_BASE_URL" \
         --env OPENAI_API_KEY="$OPENAI_API_KEY" \
-        --env PI_CODING_AGENT_DIR="$PI_CODING_AGENT_DIR" \
-        --env GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-}" \
-        --env GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-}" \
-        --env GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-}" \
-        --env GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-}" \
+        --env TMPDIR=/tmp \
         "$image" \
         --provider sglang --model "$EUVIBE_SERVED_MODEL_NAME" --thinking xhigh "$@"
 }
