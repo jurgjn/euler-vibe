@@ -40,17 +40,16 @@ first use; nothing needs to be installed by hand. Without uv:
 `pip install duckdb requests zstandard` and run it with python as usual.
 
 Examples
+    # Run from the directory the download should go to (or pass --out DIR)
+
     # Metadata + manifests only; prints counts and the number of tars involved
-    uv run afdb_nvda_hc_download.py --out ./afdb_nvda_hc --dry-run
+    download-afdb_nvda_hc --dry-run
 
     # Small end-to-end test on 3 archives
-    uv run afdb_nvda_hc_download.py --out ./afdb_nvda_hc --limit-tars 3
+    download-afdb_nvda_hc --limit-tars 3
 
     # Full run (safe to interrupt and restart)
-    uv run afdb_nvda_hc_download.py --out ./afdb_nvda_hc --workers 4
-
-    # Or make it executable once and call it directly (the shebang uses uv)
-    chmod +x afdb_nvda_hc_download.py && ./afdb_nvda_hc_download.py --out ./afdb_nvda_hc
+    download-afdb_nvda_hc --workers 4
 """
 
 from __future__ import annotations
@@ -305,6 +304,13 @@ def _num(col: str) -> str:
     return f"CASE WHEN isfinite({cast}) THEN {cast} END"
 
 
+def _max2(a: str, b: str) -> str:
+    # NULL unless both directions are scored: DuckDB's greatest() skips NULLs,
+    # which would let one missing score fall back to the other direction.
+    x, y = _num(a), _num(b)
+    return f"CASE WHEN {x} IS NOT NULL AND {y} IS NOT NULL THEN greatest({x}, {y}) END"
+
+
 def select_models(csv_path: Path, ctype: str, subdir: str, manifest: Path,
                   base_url: str, ipsae_min: float, pdockq2_min: float) -> dict:
     con = duckdb.connect()
@@ -319,8 +325,8 @@ def select_models(csv_path: Path, ctype: str, subdir: str, manifest: Path,
         SELECT *,
             CASE WHEN starts_with(modelEntityId, 'AF-') THEN modelEntityId
                  ELSE 'AF-' || modelEntityId END AS model_id,
-            greatest({_num('ipSAE_AB')}, {_num('ipSAE_BA')}) AS ipSAE_max,
-            greatest({_num('pDockQ2_AB')}, {_num('pDockQ2_BA')}) AS pDockQ2_max
+            {_max2('ipSAE_AB', 'ipSAE_BA')} AS ipSAE_max,
+            {_max2('pDockQ2_AB', 'pDockQ2_BA')} AS pDockQ2_max
         FROM {src}"""
     passes = f"ipSAE_max >= {ipsae_min!r} AND pDockQ2_max >= {pdockq2_min!r}"
     has_tar = "coalesce(trim(local_tar_name), '') <> ''"
