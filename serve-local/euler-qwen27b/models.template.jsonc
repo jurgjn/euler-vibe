@@ -14,8 +14,7 @@
           "name": "$EUVIBE_SERVED_MODEL_NAME",
           "reasoning": true,
           "input": [
-            "text",
-            "image"
+            "text" // sglang runs with --language-model-only
           ],
           "thinkingLevelMap": {
             "off": "none",

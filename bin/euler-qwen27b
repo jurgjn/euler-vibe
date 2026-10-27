@@ -10,6 +10,7 @@ export EUVIBE_MODEL=${EUVIBE_MODEL:-Qwen/Qwen3.8-27B-FP8}
 # Name the server exposes the model as (sglang --served-model-name); also what
 # pi selects with --model and reports as $PI_MODEL, e.g. in commit trailers
 export EUVIBE_SERVED_MODEL_NAME=${EUVIBE_SERVED_MODEL_NAME:-qwen3.8-27b}
+export EUVIBE_DRAFT=${EUVIBE_DRAFT:-incoai/Qwen3.8-27B-DFlash2}
 
 export EUVIBE_SERVE=${EUVIBE_SERVE:-$EUVIBE_DIR/serve-local/euler-qwen27b}
 # Default session name is the script's file name. tmux turns '.' and ':' into
@@ -303,6 +304,7 @@ cmd_serve_start() {
         -e EUVIBE_PORT="$EUVIBE_PORT"
         -e EUVIBE_MODEL="$EUVIBE_MODEL"
         -e EUVIBE_SERVED_MODEL_NAME="$EUVIBE_SERVED_MODEL_NAME"
+        -e EUVIBE_DRAFT="$EUVIBE_DRAFT"
         -e EUVIBE_SERVE="$EUVIBE_SERVE"
         -e EUVIBE_CONTEXT_LENGTH="$EUVIBE_CONTEXT_LENGTH"
         -e OPENAI_API_KEY="$OPENAI_API_KEY"

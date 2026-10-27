@@ -6,6 +6,7 @@ set -v -x -e -u -o pipefail
 : "${EUVIBE_PORT:?must be set}"
 : "${EUVIBE_MODEL:?must be set}"
 : "${EUVIBE_SERVED_MODEL_NAME:?must be set}"
+: "${EUVIBE_DRAFT:?must be set}"
 : "${EUVIBE_CONTEXT_LENGTH:?must be set}"
 
 echo EUVIBE_DIR is $EUVIBE_DIR, EUVIBE_PORT is $EUVIBE_PORT
@@ -60,8 +61,8 @@ ARGS=(
     --model-path $EUVIBE_MODEL
     --served-model-name $EUVIBE_SERVED_MODEL_NAME
 
-    # 2x rtx_4090 (TP=2): ~14.5 GiB/GPU of weights leaves room for one
-    # session at full context, so trade concurrency for context length
+    # 2x rtx_4090 (TP=2): ~15 GiB/GPU of target + draft weights leaves room
+    # for one session at full context, so trade concurrency for context length
     --max-running-requests 1
     --context-length $EUVIBE_CONTEXT_LENGTH
     # Needed for 262144: only 16/64 layers are full attention, so the fp8 KV
@@ -80,14 +81,25 @@ ARGS=(
     # PCIe 4090s: custom allreduce is unsupported anyway; silences the warning
     --disable-custom-all-reduce
 
-    # Qwen3.8 is served as a VLM: the tokenizer process otherwise preprocesses
-    # images on GPU 0, next to TP0's ~22 GiB, and in long sessions (pi resends
-    # every image each turn) fails with CUDA OOM. Keep preprocessing on CPU.
-    --image-processor-backend pil
+    # Text only: never load the vision encoder, leaving its memory to the KV
+    # cache; image requests are rejected (models.json tells pi as much)
+    --language-model-only
 
     # Explicit rather than relying on chat-template auto-detection
     --reasoning-parser qwen3
     --tool-call-parser qwen3_coder
+
+    --speculative-algorithm DFLASH
+    --speculative-draft-model-path $EUVIBE_DRAFT
+    --speculative-dflash-block-size 6
+
+    # The draft checkpoint is bf16 and does not inherit the target's fp8
+    # unless --quantization is set; fp8 halves its ~1.6 GiB/GPU of weights.
+    # Like fp8 draft KV, this only affects acceptance, not output.
+    --speculative-draft-model-quantization fp8
+    # The draft KV pool has a slot per target token, even with
+    # --speculative-draft-window-size, so keep it in fp8 too
+    --speculative-draft-kv-cache-dtype fp8_e4m3
 
     # Only reachable from this node (pi connects via localhost); key matches models.json
     --host 127.0.0.1
@@ -100,6 +112,16 @@ export MODEL_SRC=$EUVIBE_DIR/serve-local/models/$EUVIBE_MODEL
 export MODEL_DST=$OVERLAY_DIR/models/$EUVIBE_MODEL
 echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
+    --exclude ".git/" \
+    --progress --stats 1m \
+    --transfers=4 \
+    --multi-thread-streams=8 \
+    --multi-thread-cutoff=64M
+
+export DRAFT_SRC=$EUVIBE_DIR/serve-local/models/$EUVIBE_DRAFT
+export DRAFT_DST=$OVERLAY_DIR/models/$EUVIBE_DRAFT
+echo ${FROM} Copying draft - DRAFT_SRC is $DRAFT_SRC, DRAFT_DST is $DRAFT_DST
+rclone copy $DRAFT_SRC $DRAFT_DST \
     --exclude ".git/" \
     --progress --stats 1m \
     --transfers=4 \
