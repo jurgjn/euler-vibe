@@ -6,7 +6,6 @@ set -v -x -e -u -o pipefail
 : "${EUVIBE_PORT:?must be set}"
 : "${EUVIBE_MODEL:?must be set}"
 : "${EUVIBE_SERVED_MODEL_NAME:?must be set}"
-: "${EUVIBE_DRAFT:?must be set}"
 : "${EUVIBE_CONTEXT_LENGTH:?must be set}"
 
 echo EUVIBE_DIR is $EUVIBE_DIR, EUVIBE_PORT is $EUVIBE_PORT
@@ -22,6 +21,16 @@ export OVERLAY_DIR="$TMPDIR/euler-vibe.$$"
 echo ${FROM} OVERLAY_DIR is $OVERLAY_DIR
 mkdir -p "$OVERLAY_DIR"/{home,models,overlay,tmp}
 
+# Use exactly 2 GPUs, even if the job or node has more: the first two of
+# those visible here (CUDA_VISIBLE_DEVICES under Slurm, else all on the node)
+IFS=, read -r -a GPUS <<< "${CUDA_VISIBLE_DEVICES:-$(nvidia-smi --query-gpu=index --format=csv,noheader | paste -sd,)}"
+if (( ${#GPUS[@]} < 2 )); then
+    echo "${FROM} Need 2 GPUs, found ${#GPUS[@]}: ${GPUS[*]}" >&2
+    exit 1
+fi
+export EUVIBE_GPUS="${GPUS[0]},${GPUS[1]}"
+echo ${FROM} EUVIBE_GPUS is $EUVIBE_GPUS
+
 ARGS=(
     --nv
     --cleanenv
@@ -33,6 +42,11 @@ ARGS=(
     --bind $OVERLAY_DIR/tmp:/tmp
     --overlay $OVERLAY_DIR/overlay
 
+    # Memory is tight on 24 GiB cards; reclaim fragmented "reserved but
+    # unallocated" memory (0.57 GiB in an OOM at --mem-fraction-static 0.88)
+    --env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    --env CUDA_VISIBLE_DEVICES=$EUVIBE_GPUS
+
     # Like vLLM, SGLang uses high-performance Inter-Process Communication (IPC) for Multi-GPU configurations. Apptainer restricts access to /dev/shm on cluster nodes unless cleanly bound.
     #--bind /dev/shm:/dev/shm
 
@@ -42,21 +56,28 @@ ARGS=(
     python3 -m sglang.launch_server
 
     # https://recipes.vllm.ai/Qwen/Qwen3.8-27B-FP8
-    --tp ${SLURM_GPUS_ON_NODE:-$(nvidia-smi -L | wc -l)}
+    --tp 2
     --model-path $EUVIBE_MODEL
     --served-model-name $EUVIBE_SERVED_MODEL_NAME
 
-    --max-running-requests 2
+    # 2x rtx_4090 (TP=2): ~14.5 GiB/GPU of weights leaves room for one
+    # session at full context, so trade concurrency for context length
+    --max-running-requests 1
     --context-length $EUVIBE_CONTEXT_LENGTH
-    #--kv-cache-dtype fp8_e4m3
+    # Needed for 262144: only 16/64 layers are full attention, so the fp8 KV
+    # cache is ~4 GiB/GPU at full context (bf16 would be ~8 GiB and not fit)
+    --kv-cache-dtype fp8_e4m3
 
-    # Lower = more headroom for activations/CUDA graphs (0.95 left <1 GB free)
-    --mem-fraction-static 0.75
+    # Weights + KV cache; the rest is headroom for CUDA context, NCCL,
+    # activations and CUDA graphs (0.88 ran out of memory in the forward pass)
+    --mem-fraction-static 0.84
+    # Smaller prefill chunks keep activation peaks within that headroom
+    --chunked-prefill-size 4096
     # Only capture graphs for batch sizes we can actually reach
-    --cuda-graph-max-bs-decode 2
+    --cuda-graph-max-bs-decode 1
     --cuda-graph-max-bs-prefill 2048
 
-    # 4 PCIe 4090s: custom allreduce is unsupported anyway; silences the warning
+    # PCIe 4090s: custom allreduce is unsupported anyway; silences the warning
     --disable-custom-all-reduce
 
     # Qwen3.8 is served as a VLM: the tokenizer process otherwise preprocesses
@@ -67,13 +88,6 @@ ARGS=(
     # Explicit rather than relying on chat-template auto-detection
     --reasoning-parser qwen3
     --tool-call-parser qwen3_coder
-
-    --speculative-algorithm DFLASH
-    --speculative-draft-model-path $EUVIBE_DRAFT
-    --speculative-dflash-block-size 6
-
-    # Draft KV in fp8: only affects acceptance, not output; frees device memory
-    --speculative-draft-kv-cache-dtype fp8_e4m3
 
     # Only reachable from this node (pi connects via localhost); key matches models.json
     --host 127.0.0.1
@@ -86,16 +100,6 @@ export MODEL_SRC=$EUVIBE_DIR/serve-local/models/$EUVIBE_MODEL
 export MODEL_DST=$OVERLAY_DIR/models/$EUVIBE_MODEL
 echo ${FROM} Copying model - MODEL_SRC is $MODEL_SRC, MODEL_DST is $MODEL_DST
 rclone copy $MODEL_SRC $MODEL_DST \
-    --exclude ".git/" \
-    --progress --stats 1m \
-    --transfers=4 \
-    --multi-thread-streams=8 \
-    --multi-thread-cutoff=64M
-
-export DRAFT_SRC=$EUVIBE_DIR/serve-local/models/$EUVIBE_DRAFT
-export DRAFT_DST=$OVERLAY_DIR/models/$EUVIBE_DRAFT
-echo ${FROM} Copying draft - MODEL_SRC is $DRAFT_SRC, MODEL_DST is $DRAFT_DST
-rclone copy $DRAFT_SRC $DRAFT_DST \
     --exclude ".git/" \
     --progress --stats 1m \
     --transfers=4 \
