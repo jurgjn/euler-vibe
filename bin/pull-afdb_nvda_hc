@@ -8,14 +8,15 @@
 # ]
 # ///
 """
-Download the high-confidence subset of the NVIDIA / AlphaFold DB dimer release.
+Download the high-confidence human subset of the NVIDIA / AlphaFold DB dimer release.
 
 Source: https://ftp.ebi.ac.uk/pub/databases/alphafold/collaborations/nvda/
 
 Step 1  Download homodimer_metadata.csv (~6.0 GB), heterodimer_metadata.csv
         (~2.5 GB) and README.txt. Downloads resume after interruption.
 
-Step 2  Select models that pass the high-confidence criterion from the latest
+Step 2  Select human models (taxId 9606; for heterodimers, both tax_id_1 and
+        tax_id_2; see --tax-id) that pass the high-confidence criterion from the latest
         bioRxiv version of Han et al., "AlphaFold Database expands to
         proteome-scale quaternary structures", doi:10.64898/2026.03.27.714458:
 
@@ -75,10 +76,10 @@ except ImportError:  # verification falls back to a magic-number check
     zstandard = None
 
 BASE_URL = "https://ftp.ebi.ac.uk/pub/databases/alphafold/collaborations/nvda"
-# complex type -> (metadata file, archive directory on the FTP)
+# complex type -> (metadata file, archive directory on the FTP, taxonomy columns)
 SOURCES = {
-    "homodimer": ("homodimer_metadata.csv", "homodimers"),
-    "heterodimer": ("heterodimer_metadata.csv", "heterodimers"),
+    "homodimer": ("homodimer_metadata.csv", "homodimers", ["taxId"]),
+    "heterodimer": ("heterodimer_metadata.csv", "heterodimers", ["tax_id_1", "tax_id_2"]),
 }
 README_NAME = "README.txt"
 REQUIRED_COLUMNS = ["modelEntityId", "ipSAE_AB", "ipSAE_BA",
@@ -87,6 +88,7 @@ REQUIRED_COLUMNS = ["modelEntityId", "ipSAE_AB", "ipSAE_BA",
 # Latest preprint version: joint cutoff on direction-maximised scores.
 IPSAE_MIN = 0.60
 PDOCKQ2_MIN = 0.23
+TAX_ID = 9606  # Homo sapiens
 
 MEMBER_SUFFIX = "-model_v1.cif.zst"
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
@@ -311,12 +313,13 @@ def _max2(a: str, b: str) -> str:
     return f"CASE WHEN {x} IS NOT NULL AND {y} IS NOT NULL THEN greatest({x}, {y}) END"
 
 
-def select_models(csv_path: Path, ctype: str, subdir: str, manifest: Path,
-                  base_url: str, ipsae_min: float, pdockq2_min: float) -> dict:
+def select_models(csv_path: Path, ctype: str, subdir: str, tax_cols: list[str],
+                  manifest: Path, base_url: str, ipsae_min: float, pdockq2_min: float,
+                  tax_id: int) -> dict:
     con = duckdb.connect()
     src = f"read_csv({_lit(csv_path)}, header=true, all_varchar=true)"
     columns = [r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()]
-    missing = [c for c in REQUIRED_COLUMNS if c not in columns]
+    missing = [c for c in REQUIRED_COLUMNS + tax_cols if c not in columns]
     if missing:
         raise SystemExit(f"{csv_path.name} lacks columns {missing}; the release schema may "
                          f"have changed (see README.txt). Columns found: {columns}")
@@ -328,7 +331,9 @@ def select_models(csv_path: Path, ctype: str, subdir: str, manifest: Path,
             {_max2('ipSAE_AB', 'ipSAE_BA')} AS ipSAE_max,
             {_max2('pDockQ2_AB', 'pDockQ2_BA')} AS pDockQ2_max
         FROM {src}"""
-    passes = f"ipSAE_max >= {ipsae_min!r} AND pDockQ2_max >= {pdockq2_min!r}"
+    # Every chain must come from the taxon (a human-mouse heterodimer is not selected).
+    in_taxon = " AND ".join(f'trim("{c}") = {_lit(tax_id)}' for c in tax_cols)
+    passes = f"{in_taxon} AND ipSAE_max >= {ipsae_min!r} AND pDockQ2_max >= {pdockq2_min!r}"
     has_tar = "coalesce(trim(local_tar_name), '') <> ''"
     log.info("selecting %ss from %s ...", ctype, csv_path.name)
     tmp = manifest.with_name(manifest.name + ".tmp")
@@ -352,11 +357,12 @@ def select_models(csv_path: Path, ctype: str, subdir: str, manifest: Path,
 
     upstream = "passes_quality_threshold" in columns
     flag = "lower(trim(passes_quality_threshold)) IN ('true', 't', '1', 'yes')"
-    extra = (f""", count(*) FILTER (WHERE {flag}) AS upstream_flag_pass,
+    extra = (f""", count(*) FILTER (WHERE {flag} AND {in_taxon}) AS upstream_flag_pass,
                    count(*) FILTER (WHERE {flag} AND ({passes})) AS upstream_flag_and_ours"""
              if upstream else "")
     row = con.execute(f"""
         SELECT count(*) AS rows,
+               count(*) FILTER (WHERE {in_taxon}) AS in_taxon,
                count(*) FILTER (WHERE ipSAE_max IS NOT NULL AND pDockQ2_max IS NOT NULL) AS scored,
                count(*) FILTER (WHERE {passes}) AS passing,
                count(*) FILTER (WHERE ({passes}) AND NOT {has_tar}) AS passing_without_tar,
@@ -365,7 +371,7 @@ def select_models(csv_path: Path, ctype: str, subdir: str, manifest: Path,
                     AS models_in_touched_tars
                {extra}
         FROM ({scored})""").fetchone()
-    names = ["rows", "scored", "passing", "passing_without_tar", "models_in_touched_tars"]
+    names = ["rows", "in_taxon", "scored", "passing", "passing_without_tar", "models_in_touched_tars"]
     if upstream:
         names += ["upstream_flag_pass", "upstream_flag_and_ours"]
     summary = dict(zip(names, map(int, row)))
@@ -636,6 +642,8 @@ def main(argv=None) -> int:
     p.add_argument("--types", nargs="+", choices=list(SOURCES), default=list(SOURCES))
     p.add_argument("--ipsae-min", type=float, default=IPSAE_MIN)
     p.add_argument("--pdockq2-min", type=float, default=PDOCKQ2_MIN)
+    p.add_argument("--tax-id", type=int, default=TAX_ID,
+                   help=f"NCBI taxonomy ID every chain must come from (default: {TAX_ID}, human)")
     p.add_argument("--dry-run", action="store_true",
                    help="download metadata and write manifests, but fetch no structures")
     p.add_argument("--workers", type=int, default=4,
@@ -682,24 +690,27 @@ def main(argv=None) -> int:
     cached = json.loads(summary_path.read_text()) if summary_path.exists() else {}
     manifests, summary = [], {}
     for ctype in args.types:
-        csv_name, subdir = SOURCES[ctype]
+        csv_name, subdir, tax_cols = SOURCES[ctype]
         csv_path = meta_dir / csv_name
         manifest = args.out / f"manifest_{ctype}.parquet"
         st = csv_path.stat()
         params = {"csv_bytes": st.st_size, "csv_mtime": int(st.st_mtime), "base_url": base,
-                  "ipsae_min": args.ipsae_min, "pdockq2_min": args.pdockq2_min}
+                  "ipsae_min": args.ipsae_min, "pdockq2_min": args.pdockq2_min,
+                  "tax_id": args.tax_id}
         prev = cached.get(ctype, {})
         if manifest.exists() and prev.get("params") == params:
             log.info("reusing %s", manifest.name)
             summary[ctype] = prev
         else:
             summary[ctype] = {"params": params, **select_models(
-                csv_path, ctype, subdir, manifest, base, args.ipsae_min, args.pdockq2_min)}
+                csv_path, ctype, subdir, tax_cols, manifest, base, args.ipsae_min,
+                args.pdockq2_min, args.tax_id)}
         manifests.append(manifest)
         s = summary[ctype]
-        log.info("%s: %d of %d models pass (ipSAE_max >= %s, pDockQ2_max >= %s); %d tars; "
-                 "labels %s", ctype, s["selected"], s["rows"], args.ipsae_min,
-                 args.pdockq2_min, s["tars"], s["by_label"])
+        log.info("%s: %d of %d models from taxon %d (%d in total) pass (ipSAE_max >= %s, "
+                 "pDockQ2_max >= %s); %d tars; labels %s", ctype, s["selected"], s["in_taxon"],
+                 args.tax_id, s["rows"], args.ipsae_min, args.pdockq2_min, s["tars"],
+                 s["by_label"])
         if "upstream_flag_pass" in s:
             log.info("%s: upstream passes_quality_threshold=%d, agreeing with this selection: %d",
                      ctype, s["upstream_flag_pass"], s["upstream_flag_and_ours"])
