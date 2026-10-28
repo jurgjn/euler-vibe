@@ -53,8 +53,10 @@ also bring just .euler-vibe/sandboxes/euler-qwen27b.def.
 
 pi's config (~/.pi) is mounted from home/euler-qwen27b in this repo, shared
 by all projects; your git name and email from ~/.gitconfig are passed in as
-GIT_AUTHOR_NAME etc. Other writes to the container's file system, including the rest of
-\$HOME (e.g. apt-get, npm -g or pip --user installs, caches), persist in
+GIT_AUTHOR_NAME etc. This repo is mounted read-only at the same path
+(\$EUVIBE_DIR in the container), without home/. Other writes to the
+container's file system, including the rest of \$HOME (e.g. apt-get,
+npm -g or pip --user installs, caches), persist in
 .euler-vibe/overlays/euler-qwen27b.img, created if missing with a size of
 \$EUVIBE_OVERLAY_SIZE (GiB, default 50).
 EOF
@@ -249,6 +251,18 @@ EOF
     if [[ -n "$git_email" ]]; then
         git_env+=(--env GIT_AUTHOR_EMAIL="$git_email" --env GIT_COMMITTER_EMAIL="$git_email")
     fi
+    # This repo, read-only at the same path (e.g. for debugging the sandbox),
+    # with home/ hidden behind an empty directory as it holds logins of all
+    # agents. Skipped if $PWD is in the repo: a later read-only mount of the
+    # repo would hide the read-write $PWD
+    local euvibe_mount=(--env EUVIBE_DIR="$EUVIBE_DIR")
+    if [[ "$PWD/" != "$EUVIBE_DIR/"* ]]; then
+        mkdir -p "$EUVIBE_DIR/cache/empty"
+        euvibe_mount+=(
+            --bind "$EUVIBE_DIR:$EUVIBE_DIR:ro"
+            --bind "$EUVIBE_DIR/cache/empty:$EUVIBE_DIR/home:ro"
+        )
+    fi
 
     # euler-sandbox adds the throwaway /tmp and mounts $PWD and
     # .euler-vibe/mounts; the rest of $HOME is part of the overlay
@@ -257,6 +271,7 @@ EOF
         --nv \
         --bind "$pi_home/.pi:$HOME/.pi" \
         "${git_env[@]}" \
+        "${euvibe_mount[@]}" \
         --env EUVIBE_MODEL="$EUVIBE_MODEL" \
         --env OPENAI_BASE_URL="$OPENAI_BASE_URL" \
         --env OPENAI_API_KEY="$OPENAI_API_KEY" \

@@ -14,6 +14,11 @@ rather than guessing.
 - **Visible host paths:** only the project directory (the working directory you were
   started in) and the extra mounts listed in its `.euler-vibe/mounts`, often read-only.
   The user's cluster home, other projects and the host's modules/conda are not visible.
+- **The sandbox's own code:** the euler-vibe repo that started this container is
+  mounted read-only at `$EUVIBE_DIR` (its `home/`, with all agents' logins, is hidden).
+  Read `bin/euler-claude`, `bin/euler-sandbox` and the image's `.def` in
+  `sandboxes/` there when debugging the sandbox itself, e.g. a missing mount or tool.
+  Not mounted if the project is inside the repo.
 - **No Slurm:** `sbatch`, `squeue` etc. are unavailable. You can't submit or manage
   jobs; work on the current node, or write job scripts for the user to submit.
   **Never submit, cancel or modify Slurm jobs**, even if it seems possible. If you
