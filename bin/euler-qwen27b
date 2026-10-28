@@ -52,8 +52,8 @@ it (euler-qwen27b.def) has changed since the image was built; a project can
 also bring just .euler-vibe/sandboxes/euler-qwen27b.def.
 
 pi's config (~/.pi) is mounted from home/euler-qwen27b in this repo, shared
-by all projects; ~/.gitconfig is mounted read-only from your actual home, if it
-exists. Other writes to the container's file system, including the rest of
+by all projects; your git name and email from ~/.gitconfig are passed in as
+GIT_AUTHOR_NAME etc. Other writes to the container's file system, including the rest of
 \$HOME (e.g. apt-get, npm -g or pip --user installs, caches), persist in
 .euler-vibe/overlays/euler-qwen27b.img, created if missing with a size of
 \$EUVIBE_OVERLAY_SIZE (GiB, default 50).
@@ -239,10 +239,15 @@ EOF
     image=$(pi_image)
     echo "Image: $image"
 
-    # Your git identity etc. for commits in the container, read-only
-    local gitconfig_mount=()
-    if [[ -f "$HOME/.gitconfig" ]]; then
-        gitconfig_mount=(--bind "$HOME/.gitconfig:$HOME/.gitconfig:ro")
+    # Your git identity from ~/.gitconfig for commits in the container
+    local git_env=() git_name git_email
+    git_name=$(git config --global user.name 2>/dev/null || true)
+    git_email=$(git config --global user.email 2>/dev/null || true)
+    if [[ -n "$git_name" ]]; then
+        git_env+=(--env GIT_AUTHOR_NAME="$git_name" --env GIT_COMMITTER_NAME="$git_name")
+    fi
+    if [[ -n "$git_email" ]]; then
+        git_env+=(--env GIT_AUTHOR_EMAIL="$git_email" --env GIT_COMMITTER_EMAIL="$git_email")
     fi
 
     # euler-sandbox adds the throwaway /tmp and mounts $PWD and
@@ -251,7 +256,7 @@ EOF
         --overlay-image "$(pi_overlay_image)" run \
         --nv \
         --bind "$pi_home/.pi:$HOME/.pi" \
-        "${gitconfig_mount[@]}" \
+        "${git_env[@]}" \
         --env EUVIBE_MODEL="$EUVIBE_MODEL" \
         --env OPENAI_BASE_URL="$OPENAI_BASE_URL" \
         --env OPENAI_API_KEY="$OPENAI_API_KEY" \

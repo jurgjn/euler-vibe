@@ -5,9 +5,9 @@
 # ignored).
 #
 # - Claude's login/config (~/.claude, ~/.claude.json) is mounted from
-#   home/euler-claude in this repo, shared by all projects; ~/.gitconfig is
-#   mounted read-only from your actual home, if it exists. The rest of $HOME is
-#   part of the project's overlay below. Only $PWD and the extra mounts below
+#   home/euler-claude in this repo, shared by all projects; your git name
+#   and email from ~/.gitconfig are passed in as GIT_AUTHOR_NAME etc. The rest
+#   of $HOME is part of the project's overlay below. Only $PWD and the extra mounts below
 #   are visible from the host
 # - .euler-vibe/mounts in $PWD - project-specific bind mounts, applied by
 #   euler-sandbox
@@ -101,10 +101,15 @@ chmod 700 "$CLAUDE_HOME"
 if [[ ! -e "$CLAUDE_HOME/.claude.json" ]]; then
     echo '{}' > "$CLAUDE_HOME/.claude.json"
 fi
-# Your git identity etc. for commits in the container, read-only
-GITCONFIG_MOUNT=()
-if [[ -f "$HOME/.gitconfig" ]]; then
-    GITCONFIG_MOUNT=(--bind "$HOME/.gitconfig:$HOME/.gitconfig:ro")
+# Your git identity from ~/.gitconfig for commits in the container
+GIT_ENV=()
+git_name=$(git config --global user.name 2>/dev/null || true)
+git_email=$(git config --global user.email 2>/dev/null || true)
+if [[ -n "$git_name" ]]; then
+    GIT_ENV+=(--env GIT_AUTHOR_NAME="$git_name" --env GIT_COMMITTER_NAME="$git_name")
+fi
+if [[ -n "$git_email" ]]; then
+    GIT_ENV+=(--env GIT_AUTHOR_EMAIL="$git_email" --env GIT_COMMITTER_EMAIL="$git_email")
 fi
 
 # euler-sandbox adds the throwaway /tmp and mounts $PWD and .euler-vibe/mounts
@@ -115,7 +120,7 @@ CMD=(
     --nv
     --bind "$CLAUDE_HOME/.claude:$HOME/.claude"
     --bind "$CLAUDE_HOME/.claude.json:$HOME/.claude.json"
-    "${GITCONFIG_MOUNT[@]}"
+    "${GIT_ENV[@]}"
     "$@"
     --env TERM="${TERM:-xterm-256color}"
     --env DISABLE_AUTOUPDATER=1
