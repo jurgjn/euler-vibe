@@ -113,15 +113,15 @@ if [[ -n "$git_email" ]]; then
     GIT_ENV+=(--env GIT_AUTHOR_EMAIL="$git_email" --env GIT_COMMITTER_EMAIL="$git_email")
 fi
 # This repo, read-only at the same path (e.g. for debugging the sandbox), with
-# home/ hidden behind an empty directory as it holds logins of all agents.
-# Skipped if $PWD is in the repo: a later read-only mount of the repo would
-# hide the read-write $PWD
+# home/ hidden behind an empty directory (cache/home-mask) as it holds logins
+# of all agents. Skipped if $PWD is in the repo: a later read-only mount of the
+# repo would hide the read-write $PWD
 EUVIBE_MOUNT=(--env EUVIBE_DIR="$EUVIBE_DIR")
 if [[ "$PWD/" != "$EUVIBE_DIR/"* ]]; then
-    mkdir -p "$EUVIBE_DIR/cache/empty"
+    mkdir -p "$EUVIBE_DIR/cache/home-mask"
     EUVIBE_MOUNT+=(
         --bind "$EUVIBE_DIR:$EUVIBE_DIR:ro"
-        --bind "$EUVIBE_DIR/cache/empty:$EUVIBE_DIR/home:ro"
+        --bind "$EUVIBE_DIR/cache/home-mask:$EUVIBE_DIR/home:ro"
     )
 fi
 
